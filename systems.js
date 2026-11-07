@@ -2,6 +2,7 @@
  * FILE: systems.js (BẢN SIÊU CẤP TOÀN DIỆN - TÍCH HỢP FIREBASE REALTIME & BẢO MẬT ADMIN ĐỘC QUYỀN)
  * Lead Game Systems Architecture & Security Hardening:
  * - Hệ thống Firebase Realtime Database & Cloud Sync (users/{uid})
+ * - Chống đè tài khoản trùng tên khác mật khẩu: Kiểm tra xác thực Password Hash trên Cloud
  * - Phân quyền Admin DUY NHẤT: Tài khoản bao2010 / Bao28102010 (Xóa sạch mọi quyền admin cũ trong localStorage)
  * - Server Remote Control: Ban/Unban thời gian thực (#banned-overlay), Tặng Quà Online (pendingGift)
  * - Tự động ẩn triệt để modal đăng nhập (#auth-modal & #login-modal) ngay khi đăng nhập thành công.
@@ -374,7 +375,18 @@ Game.Auth = {
     isAdmin: false,
     isLoggedIn: false,
 
-    // Hàm tiện ích: Ẩn tất cả các modal đăng nhập và mở khóa Game loop
+    hashPassword: function (password) {
+        let hash = 0x811c9dc5;
+        const salt = "TIME_TRAVEL_AUTH_SECURE_2026";
+        const str = password + salt;
+        for (let i = 0; i < str.length; i++) {
+            hash ^= str.charCodeAt(i);
+            hash = Math.imul(hash, 0x01000193) >>> 0;
+            hash = ((hash << 5) | (hash >>> 27)) >>> 0;
+        }
+        return hash.toString(16).padStart(8, '0');
+    },
+
     closeAllAuthModals: function () {
         const modals = ['auth-modal', 'login-modal'];
         modals.forEach(id => {
@@ -393,8 +405,7 @@ Game.Auth = {
         Game.state.isPaused = false;
     },
 
-    login: function (username, password) {
-        // Hỗ trợ lấy tự động từ input nếu không truyền tham số
+    login: async function (username, password) {
         if (typeof username !== 'string' || typeof password !== 'string') {
             const uInput = document.getElementById('auth-username') || document.querySelector('#auth-modal input[type="text"]');
             const pInput = document.getElementById('auth-password') || document.querySelector('#auth-modal input[type="password"]');
@@ -411,29 +422,33 @@ Game.Auth = {
         }
 
         // BẢO MẬT ĐỘC QUYỀN DUY NHẤT: bao2010 (case-insensitive) & Bao28102010
-        if (u.toLowerCase() === 'bao2010' && p === 'Bao28102010') {
-            this.isAdmin = true;
-            this.isLoggedIn = true;
-            this.currentUser = { uid: 'admin_bao2010', username: 'bao2010', role: 'ADMIN' };
-            Game.state.adminUnlocked = true;
+        if (u.toLowerCase() === 'bao2010') {
+            if (p === 'Bao28102010') {
+                this.isAdmin = true;
+                this.isLoggedIn = true;
+                this.currentUser = { uid: 'admin_bao2010', username: 'bao2010', role: 'ADMIN' };
+                Game.state.adminUnlocked = true;
 
-            const adminEl = document.getElementById('admin-panel');
-            if (adminEl) adminEl.classList.remove('hidden');
+                const adminEl = document.getElementById('admin-panel');
+                if (adminEl) adminEl.classList.remove('hidden');
 
-            Game.Systems.ensureAdminDrawerShortcut();
-            Game.Systems.syncAdminInputs();
-            Game.Cloud.renderAdminServerTab();
+                Game.Systems.ensureAdminDrawerShortcut();
+                Game.Systems.syncAdminInputs();
+                Game.Cloud.renderAdminServerTab();
 
-            Game.Systems.notify('⚡ XÁC THỰC THÀNH CÔNG: QUYỀN CHỦ TỂ ADMIN BẢO 2010 ĐÃ KÍCH HOẠT!', '#ffd740');
-            Game.Systems.saveGame();
+                Game.Systems.notify('⚡ XÁC THỰC THÀNH CÔNG: QUYỀN CHỦ TỂ ADMIN BẢO 2010 ĐÃ KÍCH HOẠT!', '#ffd740');
+                Game.Systems.saveGame();
 
-            this.closeAllAuthModals();
-            return true;
+                this.closeAllAuthModals();
+                return true;
+            } else {
+                Game.Systems.notify('⛔ Sai mật khẩu Admin Bao 2010!', '#ef4444');
+                return false;
+            }
         }
 
-        // TÀI KHOẢN NGƯỜI CHƠI THƯỜNG: Thu hồi quyền Admin tuyệt đối
+        // TÀI KHOẢN NGƯỜI CHƠI THƯỜNG: Kiểm tra và chống đè tài khoản trên Firebase
         this.isAdmin = false;
-        this.isLoggedIn = true;
         Game.state.adminUnlocked = false;
 
         const adminEl = document.getElementById('admin-panel');
@@ -442,13 +457,85 @@ Game.Auth = {
         if (adminShortcut) adminShortcut.remove();
 
         const sanitizedUid = u.toLowerCase().replace(/[^a-z0-9_]/g, '_');
-        this.currentUser = { uid: sanitizedUid, username: u, role: 'PLAYER' };
+        const passHash = this.hashPassword(p);
 
-        Game.Systems.notify(`Chào mừng chiến binh [${u}] trở lại!`, '#38bdf8');
-        Game.Cloud.initUserSync(sanitizedUid, u);
+        if (!window.db) {
+            // Trường hợp không có mạng hoặc chưa nhúng Firebase
+            this.isLoggedIn = true;
+            this.currentUser = { uid: sanitizedUid, username: u, role: 'PLAYER' };
+            Game.Systems.notify(`Đăng nhập chế độ Offline: [${u}]`, '#38bdf8');
+            this.closeAllAuthModals();
+            return true;
+        }
 
-        this.closeAllAuthModals();
-        return true;
+        try {
+            const userRef = window.db.ref('users/' + sanitizedUid);
+            const snap = await userRef.once('value');
+            const data = snap.val();
+
+            if (data) {
+                // TÀI KHOẢN ĐÃ TỒN TẠI: Kiểm tra mật khẩu
+                if (data.passwordHash && data.passwordHash !== passHash) {
+                    Game.Systems.notify(`❌ Tên tài khoản "${u}" đã có người đăng ký! Vui lòng nhập đúng mật khẩu hoặc chọn tên khác.`, '#ef4444');
+                    return false;
+                }
+
+                // Nếu tài khoản cũ chưa có passwordHash (từ phiên bản trước), cập nhật mã hóa ngay
+                if (!data.passwordHash) {
+                    await userRef.update({ passwordHash: passHash });
+                }
+
+                // Kiểm tra trạng thái Ban
+                if (data.isBanned) {
+                    Game.Systems.notify('🚫 Tài khoản này hiện đang bị khóa bởi Admin!', '#ef4444');
+                    Game.Cloud.handleBannedState(data.banReason);
+                    return false;
+                }
+
+                // ĐỒNG BỘ DỮ LIỆU TỪ FIREBASE VỀ LOCAL ĐỂ TRÁNH LỆCH FILE SAVE
+                if (typeof data.gold === 'number') Game.state.gold = data.gold;
+                if (typeof data.level === 'number') Game.state.level = data.level;
+                if (typeof data.timeShards === 'number') Game.state.timeShards = data.timeShards;
+                if (data.currentWeapon && Game.Systems.weaponsConfig[data.currentWeapon]) {
+                    Game.state.currentWeapon = data.currentWeapon;
+                }
+
+                await userRef.update({ lastLogin: Date.now(), isOnline: true });
+            } else {
+                // TÀI KHOẢN MỚI: Tự động khởi tạo dữ liệu lên Firebase
+                await userRef.set({
+                    uid: sanitizedUid,
+                    username: u,
+                    passwordHash: passHash,
+                    gold: Game.state.gold || 200,
+                    level: Game.state.level || 1,
+                    currentWeapon: Game.state.currentWeapon || 'iron_sword',
+                    timeShards: Game.state.timeShards || 0,
+                    isBanned: false,
+                    banReason: '',
+                    createdAt: Date.now(),
+                    lastLogin: Date.now(),
+                    isOnline: true
+                });
+                Game.Systems.notify(`🎉 Đăng ký tài khoản mới thành công! Chào mừng ${u}!`, '#4ade80');
+            }
+
+            this.isLoggedIn = true;
+            this.currentUser = { uid: sanitizedUid, username: u, role: 'PLAYER' };
+
+            Game.Systems.notify(`Chào mừng chiến binh [${u}] trở lại!`, '#38bdf8');
+            Game.Cloud.initUserSync(sanitizedUid, u);
+            Game.Systems.recalculateMaxStats();
+            Game.Systems.updateUI();
+            Game.Systems.saveGame();
+
+            this.closeAllAuthModals();
+            return true;
+        } catch (err) {
+            console.error('[Auth Error]', err);
+            Game.Systems.notify('Lỗi máy chủ khi xác thực tài khoản!', '#ef4444');
+            return false;
+        }
     },
 
     loginAsGuest: function () {
@@ -458,7 +545,7 @@ Game.Auth = {
         Game.state.adminUnlocked = false;
         this.currentUser = { uid: guestId, username: 'Khách ' + guestId.slice(-4), role: 'GUEST' };
 
-        Game.Systems.notify(`Tham gia dưới dạng Khách!`, '#94a3b8');
+        Game.Systems.notify(`Tham gia dưới dạng Khách! Dữ liệu chỉ lưu tạm thời.`, '#94a3b8');
         this.closeAllAuthModals();
         return true;
     },
@@ -466,6 +553,10 @@ Game.Auth = {
     logout: function () {
         if (Game.Cloud._userListenerRef && Game.Cloud._userListenerHandler) {
             Game.Cloud._userListenerRef.off('value', Game.Cloud._userListenerHandler);
+        }
+
+        if (window.db && this.currentUser && !this.isAdmin) {
+            window.db.ref('users/' + this.currentUser.uid).update({ isOnline: false }).catch(() => {});
         }
 
         this.currentUser = null;
@@ -493,31 +584,40 @@ Game.Auth = {
 Game.Cloud = {
     _userListenerRef: null,
     _userListenerHandler: null,
+    _adminUsersRef: null,
+    _adminUsersHandler: null,
 
     initUserSync: function (uid, username) {
         if (!window.db) return;
         const userRef = window.db.ref('users/' + uid);
 
-        userRef.once('value').then(snap => {
-            const data = snap.val();
-            if (!data) {
-                userRef.set({
-                    uid: uid,
-                    username: username,
-                    gold: Game.state.gold || 200,
-                    level: Game.state.level || 1,
-                    currentWeapon: Game.state.currentWeapon || 'iron_sword',
-                    timeShards: Game.state.timeShards || 0,
-                    isBanned: false,
-                    banReason: '',
-                    lastLogin: Date.now()
-                });
-            } else {
-                userRef.update({ lastLogin: Date.now() });
-            }
-        }).catch(err => console.warn('[Cloud] Init user sync error:', err));
-
+        userRef.onDisconnect().update({ isOnline: false });
         this.listenUserChanges(uid);
+    },
+
+    handleBannedState: function (banReason) {
+        Game.state.isPaused = true;
+        let banOverlay = document.getElementById('banned-overlay');
+        if (!banOverlay) {
+            banOverlay = document.createElement('div');
+            banOverlay.id = 'banned-overlay';
+            banOverlay.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+                background: rgba(10, 5, 20, 0.96); z-index: 999999;
+                display: flex; flex-direction: column; justify-content: center;
+                align-items: center; color: #ff3366; text-align: center; font-family: 'Segoe UI', Tahoma, sans-serif;
+            `;
+            document.body.appendChild(banOverlay);
+        }
+        const reason = banReason || 'Vi phạm chính sách thời không.';
+        banOverlay.innerHTML = `
+            <div style="font-size: 64px; margin-bottom: 15px;">🚫</div>
+            <h1 style="font-size: 32px; letter-spacing: 2px; color: #ff3860;">TÀI KHOẢN ĐÃ BỊ ĐÓNG BĂNG</h1>
+            <p style="font-size: 18px; color: #cbd5e1; margin-top: 10px; max-width: 500px;">Lý do: <strong>${reason}</strong></p>
+            <p style="font-size: 14px; color: #64748b; margin-top: 20px;">Vui lòng liên hệ Admin Bảo để gỡ án cấm.</p>
+        `;
+        banOverlay.classList.remove('hidden');
+        banOverlay.style.display = 'flex';
     },
 
     listenUserChanges: function (uid) {
@@ -533,28 +633,7 @@ Game.Cloud = {
 
             // 1. KIỂM TRA LỆNH KHÓA TÀI KHOẢN (BAN)
             if (data.isBanned === true) {
-                Game.state.isPaused = true;
-                let banOverlay = document.getElementById('banned-overlay');
-                if (!banOverlay) {
-                    banOverlay = document.createElement('div');
-                    banOverlay.id = 'banned-overlay';
-                    banOverlay.style.cssText = `
-                        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-                        background: rgba(10, 5, 20, 0.96); z-index: 999999;
-                        display: flex; flex-direction: column; justify-content: center;
-                        align-items: center; color: #ff3366; text-align: center; font-family: 'Segoe UI', Tahoma, sans-serif;
-                    `;
-                    document.body.appendChild(banOverlay);
-                }
-                const reason = data.banReason || 'Vi phạm chính sách thời không.';
-                banOverlay.innerHTML = `
-                    <div style="font-size: 64px; margin-bottom: 15px;">🚫</div>
-                    <h1 style="font-size: 32px; letter-spacing: 2px; color: #ff3860;">TÀI KHOẢN ĐÃ BỊ ĐÓNG BĂNG</h1>
-                    <p style="font-size: 18px; color: #cbd5e1; margin-top: 10px; max-width: 500px;">Lý do: <strong>${reason}</strong></p>
-                    <p style="font-size: 14px; color: #64748b; margin-top: 20px;">Vui lòng liên hệ Admin Bảo để gỡ án cấm.</p>
-                `;
-                banOverlay.classList.remove('hidden');
-                banOverlay.style.display = 'flex';
+                this.handleBannedState(data.banReason);
                 return;
             } else {
                 const banOverlay = document.getElementById('banned-overlay');
@@ -613,17 +692,18 @@ Game.Cloud = {
         }).catch(() => {});
     },
 
-    adminFetchUsers: function (callback) {
-        if (!window.db || !Game.Auth.isAdmin) {
-            if (callback) callback({});
-            return;
+    adminFetchUsersRealtime: function (callback) {
+        if (!window.db || !Game.Auth.isAdmin) return;
+        if (this._adminUsersRef && this._adminUsersHandler) {
+            this._adminUsersRef.off('value', this._adminUsersHandler);
         }
-        window.db.ref('users').once('value').then(snap => {
+
+        this._adminUsersRef = window.db.ref('users');
+        this._adminUsersHandler = this._adminUsersRef.on('value', snap => {
             const data = snap.val() || {};
             if (callback) callback(data);
-        }).catch(err => {
-            console.error('[Admin] Lỗi lấy danh sách users:', err);
-            if (callback) callback({});
+        }, err => {
+            console.error('[Admin Realtime Sync Error]', err);
         });
     },
 
@@ -635,7 +715,6 @@ Game.Cloud = {
             banReason: banMsg
         }).then(() => {
             Game.Systems.notify(`🚫 Đã Khóa Người Chơi: ${targetUid}`, '#ef4444');
-            this.refreshAdminUserListUI();
         });
     },
 
@@ -646,7 +725,6 @@ Game.Cloud = {
             banReason: ''
         }).then(() => {
             Game.Systems.notify(`✅ Đã Mở Khóa Người Chơi: ${targetUid}`, '#4ade80');
-            this.refreshAdminUserListUI();
         });
     },
 
@@ -671,44 +749,51 @@ Game.Cloud = {
             serverTab.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                     <span style="font-weight: bold; color: #ffd740; font-size: 13px;">🌐 QUẢN TRỊ SERVER TỪ XA (FIREBASE)</span>
-                    <button type="button" class="btn-action" style="font-size: 11px; padding: 3px 8px;" onclick="Game.Cloud.refreshAdminUserListUI()">🔄 Làm mới</button>
+                    <span id="admin-user-count" style="font-size: 11px; color: #38bdf8;">Đang kết nối...</span>
                 </div>
-                <div id="admin-user-list" style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.5); border-radius: 6px; padding: 6px; font-size: 11px;">
-                    <em>Đang tải dữ liệu người chơi từ Firebase...</em>
+                <div id="admin-user-list" style="max-height: 220px; overflow-y: auto; background: rgba(0,0,0,0.6); border-radius: 6px; padding: 6px; font-size: 11px; border: 1px solid rgba(255,255,255,0.1);">
+                    <em>Đang lắng nghe dữ liệu người chơi theo thời gian thực...</em>
                 </div>
             `;
             adminPanel.appendChild(serverTab);
         }
-        this.refreshAdminUserListUI();
-    },
 
-    refreshAdminUserListUI: function () {
-        const container = document.getElementById('admin-user-list');
-        if (!container || !Game.Auth.isAdmin) return;
+        // Bật đồng bộ thời gian thực cho danh sách user trên admin
+        this.adminFetchUsersRealtime(users => {
+            const container = document.getElementById('admin-user-list');
+            const countEl = document.getElementById('admin-user-count');
+            if (!container) return;
 
-        this.adminFetchUsers(users => {
             const keys = Object.keys(users);
+            if (countEl) countEl.textContent = `Tổng: ${keys.length} người chơi`;
+
             if (keys.length === 0) {
-                container.innerHTML = '<span style="color: #94a3b8;">Chưa có người chơi nào đăng nhập.</span>';
+                container.innerHTML = '<span style="color: #94a3b8;">Chưa có dữ liệu người chơi trên Firebase.</span>';
                 return;
             }
 
             container.innerHTML = keys.map(k => {
                 const u = users[k];
                 const isBanned = !!u.isBanned;
+                const isOnline = !!u.isOnline;
+                const weaponName = (Game.Systems.weaponsConfig[u.currentWeapon] && Game.Systems.weaponsConfig[u.currentWeapon].name) || u.currentWeapon || 'Chưa rõ';
+
                 return `
-                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.08); padding: 5px 0;">
-                        <div>
-                            <strong style="color: ${isBanned ? '#ef4444' : '#38bdf8'}">${u.username || k}</strong>
-                            <span style="color: #94a3b8; margin-left: 6px;">Lv.${u.level || 1} | ${u.gold || 0}G | ${u.timeShards || 0}💎</span>
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.08); padding: 6px 0;">
+                        <div style="line-height: 1.4;">
+                            <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${isOnline ? '#22c55e' : '#64748b'}; margin-right: 4px;"></span>
+                            <strong style="color: ${isBanned ? '#ef4444' : '#38bdf8'}; font-size: 12px;">${u.username || k}</strong>
                             ${isBanned ? '<span style="color:#ef4444; font-weight:bold; margin-left:4px;">[BANNED]</span>' : ''}
+                            <div style="color: #94a3b8; font-size: 10px;">
+                                Cấp: <span style="color:#fde047;">${u.level || 1}</span> | Vàng: <span style="color:#fde047;">${(u.gold || 0).toLocaleString()}G</span> | Mảnh: <span style="color:#38bdf8;">${u.timeShards || 0}💎</span> | VK: ${weaponName}
+                            </div>
                         </div>
-                        <div style="display: flex; gap: 4px;">
+                        <div style="display: flex; gap: 4px; align-items: center;">
                             ${isBanned
-                                ? `<button type="button" class="btn-action" style="background:#22c55e; color:#fff; font-size:10px; padding:2px 6px;" onclick="Game.Cloud.adminUnbanUser('${k}')">Gỡ Ban</button>`
-                                : `<button type="button" class="btn-action" style="background:#ef4444; color:#fff; font-size:10px; padding:2px 6px;" onclick="Game.Cloud.promptBan('${k}')">Ban</button>`
+                                ? `<button type="button" class="btn-action" style="background:#22c55e; color:#fff; font-size:10px; padding:3px 6px;" onclick="Game.Cloud.adminUnbanUser('${k}')">Gỡ Ban</button>`
+                                : `<button type="button" class="btn-action" style="background:#ef4444; color:#fff; font-size:10px; padding:3px 6px;" onclick="Game.Cloud.promptBan('${k}')">Khóa</button>`
                             }
-                            <button type="button" class="btn-action" style="background:#0284c7; color:#fff; font-size:10px; padding:2px 6px;" onclick="Game.Cloud.promptGift('${k}')">Tặng Quà</button>
+                            <button type="button" class="btn-action" style="background:#0284c7; color:#fff; font-size:10px; padding:3px 6px;" onclick="Game.Cloud.promptGift('${k}')">Tặng Quà</button>
                         </div>
                     </div>
                 `;
@@ -717,7 +802,7 @@ Game.Cloud = {
     },
 
     promptBan: function (targetUid) {
-        const reason = prompt(`Nhập lý do khóa tài khoản [${targetUid}]:`, 'Vi phạm nội quy máy chủ');
+        const reason = prompt(`Nhập lý do khóa tài khoản [${targetUid}]:`, 'Vi phạm quy định game');
         if (reason !== null) {
             this.adminBanUser(targetUid, reason);
         }
@@ -1561,7 +1646,6 @@ Game.Systems = {
     },
 
     bindAuthUiEvents: function () {
-        // Gắn sự kiện cho các nút trên giao diện đăng nhập
         const btnAuthLogin = document.getElementById('btn-auth-login');
         if (btnAuthLogin) {
             btnAuthLogin.onclick = () => Game.Auth.login();
@@ -1572,7 +1656,6 @@ Game.Systems = {
             btnGuest.onclick = () => Game.Auth.loginAsGuest();
         }
 
-        // Bắt sự kiện phím Enter ở các ô nhập tài khoản / mật khẩu
         const pInputs = document.querySelectorAll('#auth-password, input[type="password"]');
         pInputs.forEach(input => {
             input.onkeydown = e => {
@@ -1580,7 +1663,6 @@ Game.Systems = {
             };
         });
 
-        // Bắt sự kiện cho bất kỳ nút nào có chữ "Đăng Nhập" hoặc "Vào Game"
         document.querySelectorAll('button').forEach(btn => {
             const txt = (btn.textContent || '').trim().toLowerCase();
             if ((txt.includes('đăng nhập') || txt.includes('vào game')) && !btn.id.includes('shop')) {
@@ -1602,7 +1684,6 @@ Game.Systems = {
         this._syncCombatSkillsets();
         this.loadGame();
 
-        // Thu hồi toàn bộ quyền Admin từ save cũ
         Game.state.adminUnlocked = false;
         if (Game.Auth) Game.Auth.isAdmin = false;
         const adminEl = document.getElementById('admin-panel');
@@ -1636,10 +1717,8 @@ Game.Systems = {
         this.syncAdminInputs();
         this.updateUI();
 
-        // Kích hoạt ràng buộc các nút đăng nhập trên giao diện
         this.bindAuthUiEvents();
 
-        // Kiểm tra phiên đăng nhập
         if (!Game.Auth.isLoggedIn) {
             Game.Cloud.showLoginModal();
             Game.state.isPaused = true;
@@ -2143,7 +2222,7 @@ Game.Systems = {
         const cfg = this.upgradesConfig[stat];
         if (!cfg) return;
         const curLvl = Game.state.upgradeLevels[stat] || 0;
-        const cost = Math.floor(cfg.baseCost * Math.pow(1.35, lvl));
+        const cost = Math.floor(cfg.baseCost * Math.pow(1.35, curLvl));
         if (Game.state.gold < cost) {
             this.notify(`Cần ${cost}G để nâng cấp!`, '#f87171');
             return;
