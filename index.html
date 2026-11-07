@@ -833,5 +833,16 @@
   <script src="enemies.js"></script>
   <script src="systems.js"></script>
   <script src="main.js"></script>
+
+  <!-- Đăng ký Service Worker để biến Web thành App Cài Đặt (PWA) -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+          .then((reg) => console.log('Service Worker đã đăng ký thành công:', reg.scope))
+          .catch((err) => console.warn('Lỗi đăng ký Service Worker:', err));
+      });
+    }
+  </script>
 </body>
 </html>
