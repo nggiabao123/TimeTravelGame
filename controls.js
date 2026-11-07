@@ -1,0 +1,2364 @@
+/**
+ * ============================================================================
+ * FILE: controls.js
+ * HỆ THỐNG ĐIỀU KHIỂN & GIAO DIỆN CẢM ỨNG / PC HUD CHUYÊN NGHIỆP (ESPORTS ARPG)
+ * DỰ ÁN: KẺ DU HÀNH THỜI KHÔNG
+ * ============================================================================
+ * 1. Quick-Tap Auto-Aim vs Precision Drag-Aim (Ngưỡng nhạy 12px * uiScale, Dynamic Angular Lerp).
+ * 2. Hold-to-Fire / Auto-Combo liên tục mượt mà cả trên Mobile (Touch) và PC (J / Space / Chuột).
+ * 3. MOBA/ARPG Aim Trajectory: Nón hỗ trợ ±15°, Radar Lock-On Crosshair Sci-Fi 4 góc xoay động,
+ *    quỹ đạo đạn pháo Cannon AoE 2 vòng (Sweet-spot 40% & splash 55%), cảnh báo nhiệt Laser Gun.
+ * 4. PC Mouse Aim Mode: Phím 'F' hoặc Giữ Chuột Phải để xoay & bắn theo con trỏ chuột trong thế giới.
+ * 5. HUD Trực quan: Tên & Icon vũ khí, Vòng báo nhiệt (Heat Ring) cho Laser Gun, Lóe sáng hồi chiêu
+ *    (Ready Flash Ring), giữ nguyên 100% chế độ Chỉnh sửa HUD (HUD Customizer).
+ */
+
+window.Game = window.Game || {};
+
+window.Game.Controls = {
+    canvas: null,
+    uiScale: 1.0,
+
+    // 1. Hạ ngưỡng kéo ngắm xuống 12 để phản hồi kéo ngắm tức thì
+    AIM_DRAG_THRESHOLD: 12,
+
+    // Bàn phím & Chuột PC
+    keys: {},
+    mouseDownButtonKey: null,
+
+    // Chế độ Ngắm Chuột PC (PC Cursor Aim)
+    mouseAimActive: false,
+    rightMouseDown: false,
+    mouseScreenPos: { x: 0, y: 0 },
+    mouseWorldPos: { x: 0, y: 0 },
+
+    // Hệ thống Tự Động Đánh Liên Thanh khi Giữ Nút (Continuous Hold-to-Fire)
+    autoFireTracker: {
+        attack: { isHolding: false, lastFireTime: 0, minInterval: 0.12 }
+    },
+
+    // Hiệu ứng Lóe sáng viền nút khi hồi chiêu xong (Ready Flash Rings)
+    skillFlashStates: [
+        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // attack
+        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // skill1
+        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // skill2
+        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }  // skill3 (Rage)
+    ],
+
+    // Cờ chế độ Chỉnh sửa HUD (HUD Customizer)
+    isEditMode: false,
+    STORAGE_KEY: 'CUSTOM_HUD_LAYOUT_V2',
+    draggingHudKey: null,
+    dragTouchId: null,
+    dragOffset: { x: 0, y: 0 },
+
+    // Kích thước gốc của các nút
+    baseRadii: {
+        joystick: 54,
+        attack: 44,
+        skill1: 31,
+        skill2: 31,
+        skill3: 33,
+        switchWeapon: 24,
+        timeShift: 24,
+        interact: 27
+    },
+
+    editToolbarRects: {
+        save: { x: 0, y: 0, w: 120, h: 38 },
+        reset: { x: 0, y: 0, w: 120, h: 38 },
+        cancel: { x: 0, y: 0, w: 90, h: 38 }
+    },
+
+    // Virtual Joystick (Góc dưới trái)
+    joystick: {
+        active: false,
+        touchId: null,
+        originX: 120,
+        originY: 0,
+        currentX: 120,
+        currentY: 0,
+        maxRadius: 54,
+        deadzone: 0.08,
+        dx: 0,
+        dy: 0,
+        angle: 0
+    },
+
+    lastAngle: 0,
+    ripples: [],
+
+    // Danh sách các nút điều khiển
+    buttons: {
+        attack: {
+            index: 0,
+            x: 0,
+            y: 0,
+            r: 44,
+            keyHint: 'J',
+            pressed: false,
+            touchId: null,
+            isAiming: false,
+            touchStartX: 0,
+            touchStartY: 0,
+            aimAngle: 0,
+            targetAimAngle: 0,
+            aimDistRatio: 1.0,
+            aimCanceled: false
+        },
+        skill1: {
+            index: 1,
+            x: 0,
+            y: 0,
+            r: 31,
+            keyHint: 'K',
+            pressed: false,
+            touchId: null,
+            isAiming: false,
+            touchStartX: 0,
+            touchStartY: 0,
+            aimAngle: 0,
+            targetAimAngle: 0,
+            aimDistRatio: 1.0,
+            aimCanceled: false
+        },
+        skill2: {
+            index: 2,
+            x: 0,
+            y: 0,
+            r: 31,
+            keyHint: 'L',
+            pressed: false,
+            touchId: null,
+            isAiming: false,
+            touchStartX: 0,
+            touchStartY: 0,
+            aimAngle: 0,
+            targetAimAngle: 0,
+            aimDistRatio: 1.0,
+            aimCanceled: false
+        },
+        skill3: {
+            index: 3,
+            x: 0,
+            y: 0,
+            r: 33,
+            keyHint: 'U',
+            pressed: false,
+            touchId: null,
+            isAiming: false,
+            touchStartX: 0,
+            touchStartY: 0,
+            aimAngle: 0,
+            targetAimAngle: 0,
+            aimDistRatio: 1.0,
+            aimCanceled: false
+        },
+        switchWeapon: { x: 0, y: 0, r: 24, keyHint: 'Tab', pressed: false, touchId: null },
+        timeShift: { x: 0, y: 0, r: 24, keyHint: 'Q', pressed: false, touchId: null },
+        interact: { x: 0, y: 0, r: 27, keyHint: 'E', pressed: false, touchId: null }
+    },
+
+    // Vùng Hủy Chiêu (Cancel Zone)
+    cancelZone: {
+        x: 0,
+        y: 80,
+        r: 45,
+        active: false
+    },
+
+    _lastCdTickTime: 0,
+
+    // ==========================================
+    // TOÁN HỌC & LÀM MƯỢT GÓC (ANGULAR LERP)
+    // ==========================================
+    _lerpAngle: function (current, target, t) {
+        let diff = (target - current) % (Math.PI * 2);
+        if (diff < -Math.PI) diff += Math.PI * 2;
+        if (diff > Math.PI) diff -= Math.PI * 2;
+        return current + diff * Math.max(0, Math.min(1, t));
+    },
+
+    init: function (canvas) {
+        this.canvas = canvas || document.querySelector('canvas');
+
+        const initialW = (this.canvas && this.canvas.width) || window.innerWidth || 1280;
+        const initialH = (this.canvas && this.canvas.height) || window.innerHeight || 720;
+
+        this.onResize(initialW, initialH);
+
+        this._bindKeyboardEvents();
+        if (this.canvas) {
+            this._bindTouchEvents(this.canvas);
+            this._bindMouseEvents(this.canvas);
+        }
+    },
+
+    onResize: function (width, height) {
+        const w = width || (this.canvas && this.canvas.width) || window.innerWidth || 1280;
+        const h = height || (this.canvas && this.canvas.height) || window.innerHeight || 720;
+
+        if (!this.loadCustomLayout(w, h)) {
+            this._resetToDefaultLayout(w, h);
+        }
+        this._updateEditToolbarRects(w, h);
+    },
+
+    _computeUiScale: function (width, height) {
+        const isMobile = width <= 950 || height <= 580;
+        return isMobile ? Math.max(0.66, Math.min(width / 1080, height / 600)) : 1.0;
+    },
+
+    _applyScaledRadii: function () {
+        const s = this.uiScale || 1.0;
+        this.joystick.maxRadius = this.baseRadii.joystick * s;
+        for (let key in this.buttons) {
+            if (this.baseRadii[key]) {
+                this.buttons[key].r = this.baseRadii[key] * s;
+            }
+        }
+    },
+
+    _updateEditToolbarRects: function (width, height) {
+        const centerX = width * 0.5;
+        const topY = Math.max(16, 20 * (this.uiScale || 1.0));
+        const btnW = 116;
+        const btnH = 38;
+        const gap = 10;
+
+        const totalW = btnW * 3 + gap * 2;
+        const startX = centerX - totalW / 2;
+
+        this.editToolbarRects.save = { x: startX, y: topY + 46, w: btnW, h: btnH };
+        this.editToolbarRects.reset = { x: startX + btnW + gap, y: topY + 46, w: btnW, h: btnH };
+        this.editToolbarRects.cancel = { x: startX + (btnW + gap) * 2, y: topY + 46, w: btnW, h: btnH };
+    },
+
+    toggleEditMode: function (forceState) {
+        this.isEditMode = typeof forceState === 'boolean' ? forceState : !this.isEditMode;
+        this.releaseAllInputs();
+        this._vibrate(30);
+
+        if (typeof document !== 'undefined' && document.body) {
+            document.body.classList.toggle('hud-edit-active', this.isEditMode);
+        }
+
+        const w = (this.canvas && this.canvas.width) || window.innerWidth;
+        const h = (this.canvas && this.canvas.height) || window.innerHeight;
+        this._updateEditToolbarRects(w, h);
+
+        if (window.Game.Systems && typeof window.Game.Systems.notify === 'function') {
+            const msg = this.isEditMode
+                ? '⚙️ CHẾ ĐỘ CHỈNH SỬA NÚT: Kéo các nút để đổi vị trí!'
+                : '✅ ĐÃ THOÁT CHẾ ĐỘ CHỈNH SỬA NÚT';
+            window.Game.Systems.notify(msg, this.isEditMode ? '#f59e0b' : '#10b981');
+        }
+    },
+
+    toggleMouseAim: function (forceState) {
+        this.mouseAimActive = typeof forceState === 'boolean' ? forceState : !this.mouseAimActive;
+        this._vibrate(20);
+        if (window.Game.Systems && typeof window.Game.Systems.notify === 'function') {
+            const msg = this.mouseAimActive
+                ? '🎯 CHẾ ĐỘ NGẮM CHUỘT PC: ĐÃ BẬT (Ấn F để tắt)'
+                : '🎯 CHẾ ĐỘ NGẮM CHUỘT PC: ĐÃ TẮT';
+            window.Game.Systems.notify(msg, this.mouseAimActive ? '#00f2fe' : '#94a3b8');
+        }
+    },
+
+    saveCustomLayout: function () {
+        const w = Math.max(1, (this.canvas && this.canvas.width) || window.innerWidth);
+        const h = Math.max(1, (this.canvas && this.canvas.height) || window.innerHeight);
+
+        const layoutData = {
+            joystick: {
+                rx: this.joystick.originX / w,
+                ry: this.joystick.originY / h
+            },
+            buttons: {}
+        };
+
+        for (let key in this.buttons) {
+            layoutData.buttons[key] = {
+                rx: this.buttons[key].x / w,
+                ry: this.buttons[key].y / h
+            };
+        }
+
+        try {
+            localStorage.setItem(this.STORAGE_KEY, JSON.stringify(layoutData));
+            this._vibrate([20, 50, 20]);
+            if (window.Game.Systems && typeof window.Game.Systems.notify === 'function') {
+                window.Game.Systems.notify('💾 Đã lưu vị trí nút thành công!', '#10b981');
+            }
+        } catch (e) {
+            console.error('Không thể lưu bố cục HUD:', e);
+        }
+    },
+
+    loadCustomLayout: function (width, height) {
+        try {
+            const raw = localStorage.getItem(this.STORAGE_KEY);
+            if (!raw) return false;
+            const data = JSON.parse(raw);
+            if (!data || !data.buttons) return false;
+
+            this.uiScale = this._computeUiScale(width, height);
+            this._applyScaledRadii();
+
+            if (data.joystick && typeof data.joystick.rx === 'number') {
+                const jr = this.joystick.maxRadius + 10;
+                this.joystick.originX = Math.max(jr, Math.min(width - jr, data.joystick.rx * width));
+                this.joystick.originY = Math.max(jr, Math.min(height - jr, data.joystick.ry * height));
+                this.joystick.currentX = this.joystick.originX;
+                this.joystick.currentY = this.joystick.originY;
+            }
+
+            for (let key in this.buttons) {
+                const savedBtn = data.buttons[key];
+                if (savedBtn && typeof savedBtn.rx === 'number' && typeof savedBtn.ry === 'number') {
+                    const br = this.buttons[key].r + 8;
+                    this.buttons[key].x = Math.max(br, Math.min(width - br, savedBtn.rx * width));
+                    this.buttons[key].y = Math.max(br, Math.min(height - br, savedBtn.ry * height));
+                }
+            }
+
+            this.cancelZone.x = width * 0.5;
+            this.cancelZone.y = Math.max(65, 80 * this.uiScale);
+            this.cancelZone.r = 45 * this.uiScale;
+            return true;
+        } catch (e) {
+            console.error('Lỗi khi đọc cấu hình HUD:', e);
+            return false;
+        }
+    },
+
+    _resetToDefaultLayout: function (width, height) {
+        this.uiScale = this._computeUiScale(width, height);
+        const uiScale = this.uiScale;
+        this._applyScaledRadii();
+
+        const atkX = width - 78 * uiScale;
+        const atkY = height - 74 * uiScale;
+        this.buttons.attack.x = atkX;
+        this.buttons.attack.y = atkY;
+
+        const skillArcR = 108 * uiScale;
+        this.buttons.skill1.x = atkX + Math.cos((180 * Math.PI) / 180) * skillArcR;
+        this.buttons.skill1.y = atkY + Math.sin((180 * Math.PI) / 180) * skillArcR;
+
+        this.buttons.skill2.x = atkX + Math.cos((225 * Math.PI) / 180) * skillArcR;
+        this.buttons.skill2.y = atkY + Math.sin((225 * Math.PI) / 180) * skillArcR;
+
+        this.buttons.skill3.x = atkX + Math.cos((270 * Math.PI) / 180) * skillArcR;
+        this.buttons.skill3.y = atkY + Math.sin((270 * Math.PI) / 180) * skillArcR;
+
+        const subArcR = 176 * uiScale;
+        this.buttons.switchWeapon.x = atkX + Math.cos((192 * Math.PI) / 180) * subArcR;
+        this.buttons.switchWeapon.y = atkY + Math.sin((192 * Math.PI) / 180) * subArcR;
+
+        this.buttons.timeShift.x = atkX + Math.cos((228 * Math.PI) / 180) * subArcR;
+        this.buttons.timeShift.y = atkY + Math.sin((228 * Math.PI) / 180) * subArcR;
+
+        this.buttons.interact.x = atkX + Math.cos((264 * Math.PI) / 180) * subArcR;
+        this.buttons.interact.y = atkY + Math.sin((264 * Math.PI) / 180) * subArcR;
+
+        this.joystick.originX = Math.max(75 * uiScale, width * 0.14);
+        this.joystick.originY = height - Math.max(85 * uiScale, height * 0.22);
+        this.joystick.currentX = this.joystick.originX;
+        this.joystick.currentY = this.joystick.originY;
+
+        this.cancelZone.x = width * 0.5;
+        this.cancelZone.y = Math.max(65, 80 * uiScale);
+        this.cancelZone.r = 45 * uiScale;
+    },
+
+    resetAndClearSavedLayout: function () {
+        try {
+            localStorage.removeItem(this.STORAGE_KEY);
+            localStorage.removeItem('CUSTOM_HUD_LAYOUT');
+        } catch (e) {}
+        const w = (this.canvas && this.canvas.width) || window.innerWidth;
+        const h = (this.canvas && this.canvas.height) || window.innerHeight;
+        this._resetToDefaultLayout(w, h);
+        this._vibrate(20);
+        if (window.Game.Systems && typeof window.Game.Systems.notify === 'function') {
+            window.Game.Systems.notify('🔄 Đã khôi phục vị trí nút mặc định!', '#38bdf8');
+        }
+    },
+
+    _vibrate: function (ms) {
+        try {
+            if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+                navigator.vibrate(ms || 15);
+            }
+        } catch (err) {}
+    },
+
+    _spawnRipple: function (btn, color) {
+        if (!btn) return;
+        this.ripples.push({
+            x: btn.x,
+            y: btn.y,
+            r: btn.r * 0.85,
+            maxR: btn.r * 1.65,
+            alpha: 0.9,
+            color: color || '#38bdf8'
+        });
+    },
+
+    isControlLocked: function () {
+        const state = window.Game && window.Game.state;
+        if (state && state.isPaused === true) return true;
+
+        if (typeof document !== 'undefined') {
+            const shopModal = document.getElementById('shop-modal');
+            if (shopModal && !shopModal.classList.contains('hidden')) return true;
+            const giftModal = document.getElementById('giftcode-modal');
+            if (giftModal && !giftModal.classList.contains('hidden')) return true;
+            const charModal = document.getElementById('character-select-modal');
+            if (charModal && !charModal.classList.contains('hidden')) return true;
+        }
+        return false;
+    },
+
+    releaseAllInputs: function () {
+        this.keys = {};
+        for (let k in this.buttons) {
+            const btn = this.buttons[k];
+            btn.pressed = false;
+            btn.touchId = null;
+            btn.isAiming = false;
+            btn.aimCanceled = false;
+        }
+        this.joystick.active = false;
+        this.joystick.touchId = null;
+        this.joystick.dx = 0;
+        this.joystick.dy = 0;
+        this.mouseDownButtonKey = null;
+        this.rightMouseDown = false;
+        this.draggingHudKey = null;
+        this.dragTouchId = null;
+        this.cancelZone.active = false;
+        this.autoFireTracker.attack.isHolding = false;
+    },
+
+    _getCanvasCoords: function (clientX, clientY) {
+        if (!this.canvas) return { x: clientX, y: clientY };
+        const rect = this.canvas.getBoundingClientRect();
+        const scaleX = this.canvas.width / (rect.width || 1);
+        const scaleY = this.canvas.height / (rect.height || 1);
+        return {
+            x: (clientX - rect.left) * scaleX,
+            y: (clientY - rect.top) * scaleY
+        };
+    },
+
+    _updateMouseWorldPos: function (screenX, screenY) {
+        this.mouseScreenPos.x = screenX;
+        this.mouseScreenPos.y = screenY;
+        const cam = window.Game.camera || { x: 0, y: 0, zoom: 1.0 };
+        const zoom = cam.zoom || 1.0;
+        this.mouseWorldPos.x = screenX / zoom + (cam.x || 0);
+        this.mouseWorldPos.y = screenY / zoom + (cam.y || 0);
+    },
+
+    _isPointInRect: function (x, y, rect) {
+        if (!rect) return false;
+        return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+    },
+
+    _handleEditPointerDown: function (x, y, pointerId) {
+        const w = (this.canvas && this.canvas.width) || window.innerWidth;
+        const h = (this.canvas && this.canvas.height) || window.innerHeight;
+        this._updateEditToolbarRects(w, h);
+
+        if (this._isPointInRect(x, y, this.editToolbarRects.save)) {
+            this.saveCustomLayout();
+            this.toggleEditMode(false);
+            return true;
+        }
+        if (this._isPointInRect(x, y, this.editToolbarRects.reset)) {
+            this.resetAndClearSavedLayout();
+            return true;
+        }
+        if (this._isPointInRect(x, y, this.editToolbarRects.cancel)) {
+            this.loadCustomLayout(w, h);
+            this.toggleEditMode(false);
+            return true;
+        }
+
+        const hitElement = this._findHitHudElementForEdit(x, y);
+        if (hitElement) {
+            this.draggingHudKey = hitElement.key;
+            this.dragTouchId = pointerId;
+            if (hitElement.key === 'joystick') {
+                this.dragOffset.x = x - this.joystick.originX;
+                this.dragOffset.y = y - this.joystick.originY;
+            } else {
+                this.dragOffset.x = x - hitElement.target.x;
+                this.dragOffset.y = y - hitElement.target.y;
+            }
+            this._vibrate(12);
+            return true;
+        }
+        return false;
+    },
+
+    _handleEditPointerMove: function (x, y, pointerId) {
+        if (!this.isEditMode || !this.draggingHudKey) return;
+        if (this.dragTouchId !== null && pointerId !== undefined && this.dragTouchId !== pointerId) return;
+
+        const canvasW = (this.canvas && this.canvas.width) || window.innerWidth;
+        const canvasH = (this.canvas && this.canvas.height) || window.innerHeight;
+
+        if (this.draggingHudKey === 'joystick') {
+            const pad = this.joystick.maxRadius + 8;
+            const targetX = Math.max(pad, Math.min(canvasW - pad, x - this.dragOffset.x));
+            const targetY = Math.max(pad, Math.min(canvasH - pad, y - this.dragOffset.y));
+            this.joystick.originX = targetX;
+            this.joystick.originY = targetY;
+            this.joystick.currentX = targetX;
+            this.joystick.currentY = targetY;
+        } else if (this.buttons[this.draggingHudKey]) {
+            const btn = this.buttons[this.draggingHudKey];
+            const pad = btn.r + 8;
+            btn.x = Math.max(pad, Math.min(canvasW - pad, x - this.dragOffset.x));
+            btn.y = Math.max(pad, Math.min(canvasH - pad, y - this.dragOffset.y));
+        }
+    },
+
+    _handleEditPointerUp: function (pointerId) {
+        if (!this.isEditMode) return;
+        if (this.dragTouchId === null || pointerId === undefined || this.dragTouchId === pointerId) {
+            this.draggingHudKey = null;
+            this.dragTouchId = null;
+        }
+    },
+
+    _handleMinimapTap: function () {
+        this._vibrate(15);
+        const state = window.Game && window.Game.state;
+        if (state) state.minimapExpanded = !state.minimapExpanded;
+
+        if (window.Game.World && typeof window.Game.World.toggleMinimapZoom === 'function') {
+            window.Game.World.toggleMinimapZoom();
+        } else if (window.Game.Systems && typeof window.Game.Systems.notify === 'function') {
+            const modeText = state && state.minimapExpanded ? 'Phóng to Radar Minimap' : 'Thu gọn Radar Minimap';
+            window.Game.Systems.notify('🗺️ ' + modeText, '#38bdf8');
+        }
+    },
+
+    _triggerSkill: function (skillIndex, aimOptions, isInitialPress) {
+        if (this.isControlLocked()) return;
+
+        const options = aimOptions || { manualAim: false };
+        if (isInitialPress) {
+            this._vibrate(skillIndex === 3 ? 25 : 15);
+            const btnMap = [this.buttons.attack, this.buttons.skill1, this.buttons.skill2, this.buttons.skill3];
+            const combatSkills = (window.Game.Combat && typeof window.Game.Combat.getActiveSkills === 'function')
+                ? window.Game.Combat.getActiveSkills()
+                : (window.Game.Combat && window.Game.Combat.skills) || [];
+
+            const color = (combatSkills[skillIndex] && combatSkills[skillIndex].color) || '#38bdf8';
+            if (btnMap[skillIndex]) {
+                this._spawnRipple(btnMap[skillIndex], color);
+            }
+        }
+
+        if (window.Game.Combat && typeof window.Game.Combat.useSkill === 'function') {
+            window.Game.Combat.useSkill(skillIndex, options);
+        }
+    },
+
+    _triggerInteract: function () {
+        if (this.isControlLocked()) return;
+        this._vibrate(15);
+        this._spawnRipple(this.buttons.interact, '#facc15');
+        if (window.Game.Systems && typeof window.Game.Systems.interact === 'function') {
+            window.Game.Systems.interact();
+        }
+    },
+
+    _triggerSwitchWeapon: function () {
+        if (this.isControlLocked()) return;
+        this._vibrate(15);
+        this._spawnRipple(this.buttons.switchWeapon, '#38bdf8');
+        if (window.Game.Systems && typeof window.Game.Systems.cycleWeapon === 'function') {
+            window.Game.Systems.cycleWeapon();
+        }
+    },
+
+    _triggerSwitchTimeline: function (targetTimeline) {
+        if (this.isControlLocked()) return;
+        this._vibrate(18);
+        this._spawnRipple(this.buttons.timeShift, '#06b6d4');
+        if (window.Game.Systems && typeof window.Game.Systems.switchTimeline === 'function') {
+            window.Game.Systems.switchTimeline(targetTimeline);
+        } else if (window.Game.state) {
+            window.Game.state.timeline = targetTimeline;
+        }
+        if (window.Game.state) {
+            window.Game.state.timeShiftCooldown = 4.0;
+        }
+    },
+
+    _cycleNextTimeline: function () {
+        if (this.isControlLocked()) return;
+        const state = window.Game.state;
+        if (state && typeof state.timeShiftCooldown === 'number' && state.timeShiftCooldown > 0.05) return;
+        const order = ['PAST', 'PRESENT', 'FUTURE'];
+        const current = (state && state.timeline) || 'PRESENT';
+        const idx = order.indexOf(current);
+        const nextTimeline = order[(idx + 1) % order.length];
+        this._triggerSwitchTimeline(nextTimeline);
+    },
+
+    _findHitRightButton: function (x, y) {
+        const entries = [
+            ['attack', this.buttons.attack],
+            ['skill1', this.buttons.skill1],
+            ['skill2', this.buttons.skill2],
+            ['skill3', this.buttons.skill3],
+            ['switchWeapon', this.buttons.switchWeapon],
+            ['timeShift', this.buttons.timeShift],
+            ['interact', this.buttons.interact]
+        ];
+
+        let bestMatch = null;
+        let minDistance = Infinity;
+
+        for (let i = 0; i < entries.length; i++) {
+            const key = entries[i][0];
+            const btn = entries[i][1];
+            const dist = Math.hypot(x - btn.x, y - btn.y);
+            if (dist <= btn.r + 8 && dist < minDistance) {
+                minDistance = dist;
+                bestMatch = { key, btn };
+            }
+        }
+        return bestMatch;
+    },
+
+    _findHitHudElementForEdit: function (x, y) {
+        const hit = this._findHitRightButton(x, y);
+        if (hit) return { key: hit.key, target: hit.btn };
+
+        if (Math.hypot(x - this.joystick.originX, y - this.joystick.originY) <= this.joystick.maxRadius + 15) {
+            return { key: 'joystick', target: this.joystick };
+        }
+        return null;
+    },
+
+    _updateJoystickVector: function (x, y) {
+        const canvasW = (this.canvas && this.canvas.width) || window.innerWidth;
+        const canvasH = (this.canvas && this.canvas.height) || window.innerHeight;
+        let rawDx = x - this.joystick.originX;
+        let rawDy = y - this.joystick.originY;
+        let dist = Math.hypot(rawDx, rawDy);
+        const maxR = this.joystick.maxRadius;
+
+        if (dist > 0.001) {
+            const angle = Math.atan2(rawDy, rawDx);
+
+            if (dist > maxR) {
+                const extra = dist - maxR;
+                this.joystick.originX += Math.cos(angle) * extra;
+                this.joystick.originY += Math.sin(angle) * extra;
+
+                const maxAllowedLeftX = canvasW * 0.42 - maxR;
+                this.joystick.originX = Math.max(maxR + 10, Math.min(maxAllowedLeftX, this.joystick.originX));
+                this.joystick.originY = Math.max(140, Math.min(canvasH - maxR - 10, this.joystick.originY));
+                dist = maxR;
+            }
+
+            this.joystick.currentX = this.joystick.originX + Math.cos(angle) * dist;
+            this.joystick.currentY = this.joystick.originY + Math.sin(angle) * dist;
+
+            const rawMagnitude = dist / maxR;
+            if (rawMagnitude < this.joystick.deadzone) {
+                this.joystick.dx = 0;
+                this.joystick.dy = 0;
+            } else {
+                const smoothMag = (rawMagnitude - this.joystick.deadzone) / (1 - this.joystick.deadzone);
+                this.joystick.dx = Math.cos(angle) * smoothMag;
+                this.joystick.dy = Math.sin(angle) * smoothMag;
+                this.joystick.angle = angle;
+                this.lastAngle = angle;
+            }
+        } else {
+            this.joystick.currentX = x;
+            this.joystick.currentY = y;
+            this.joystick.dx = 0;
+            this.joystick.dy = 0;
+        }
+    },
+
+    // ==========================================
+    // SỰ KIỆN CẢM ỨNG (MOBILE TOUCH)
+    // ==========================================
+    _bindTouchEvents: function (canvas) {
+        canvas.addEventListener(
+            'touchstart',
+            (e) => {
+                if (this.isControlLocked()) {
+                    this.releaseAllInputs();
+                    return;
+                }
+
+                e.preventDefault();
+                const canvasW = canvas.width || window.innerWidth;
+                const canvasH = canvas.height || window.innerHeight;
+
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const t = e.changedTouches[i];
+                    const pos = this._getCanvasCoords(t.clientX, t.clientY);
+
+                    if (this.isEditMode) {
+                        this._handleEditPointerDown(pos.x, pos.y, t.identifier);
+                        continue;
+                    }
+
+                    if (pos.x >= 12 && pos.x <= 120 && pos.y >= 12 && pos.y <= 120) {
+                        this._handleMinimapTap();
+                        continue;
+                    }
+                    if (pos.x <= 130 && pos.y <= 130) continue;
+
+                    const hit = this._findHitRightButton(pos.x, pos.y);
+                    if (hit) {
+                        hit.btn.pressed = true;
+                        hit.btn.touchId = t.identifier;
+
+                        if (hit.key === 'interact') {
+                            this._triggerInteract();
+                        } else if (hit.key === 'switchWeapon') {
+                            this._triggerSwitchWeapon();
+                        } else if (hit.key === 'timeShift') {
+                            this._cycleNextTimeline();
+                        } else {
+                            // Lưu gốc kéo & khởi tạo góc ngắm
+                            hit.btn.touchStartX = pos.x;
+                            hit.btn.touchStartY = pos.y;
+                            hit.btn.isAiming = false;
+                            hit.btn.aimCanceled = false;
+                            const curAngle = (window.Game.player && window.Game.player.angle) || this.lastAngle;
+                            hit.btn.aimAngle = curAngle;
+                            hit.btn.targetAimAngle = curAngle;
+                            hit.btn.aimDistRatio = 1.0;
+
+                            if (hit.key === 'attack') {
+                                this.autoFireTracker.attack.isHolding = true;
+                                this.autoFireTracker.attack.lastFireTime = 0; // Kích hoạt ngay đòn đầu
+                            }
+                        }
+                        continue;
+                    }
+
+                    const isBottomCenterHud =
+                        pos.x >= canvasW * 0.34 &&
+                        pos.x <= canvasW * 0.66 &&
+                        pos.y >= canvasH - 95 * (this.uiScale || 1.0);
+                    if (isBottomCenterHud) continue;
+
+                    if (pos.x < canvasW * 0.5 && !this.joystick.active) {
+                        const clampOriginX = Math.min(pos.x, canvasW * 0.38 - this.joystick.maxRadius - 8);
+                        this.joystick.active = true;
+                        this.joystick.touchId = t.identifier;
+                        this.joystick.originX = Math.max(this.joystick.maxRadius + 12, clampOriginX);
+                        this.joystick.originY = Math.max(135, Math.min(canvasH - this.joystick.maxRadius - 12, pos.y));
+                        this.joystick.currentX = this.joystick.originX;
+                        this.joystick.currentY = this.joystick.originY;
+                        this.joystick.dx = 0;
+                        this.joystick.dy = 0;
+                    }
+                }
+            },
+            { passive: false }
+        );
+
+        canvas.addEventListener(
+            'touchmove',
+            (e) => {
+                if (this.isControlLocked()) {
+                    this.releaseAllInputs();
+                    return;
+                }
+                e.preventDefault();
+
+                // Ngưỡng kéo ngắm siêu nhạy 12 * uiScale
+                const dragThreshold = (this.AIM_DRAG_THRESHOLD || 12) * (this.uiScale || 1.0);
+
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const t = e.changedTouches[i];
+                    const pos = this._getCanvasCoords(t.clientX, t.clientY);
+
+                    if (this.isEditMode) {
+                        this._handleEditPointerMove(pos.x, pos.y, t.identifier);
+                        continue;
+                    }
+
+                    if (this.joystick.active && t.identifier === this.joystick.touchId) {
+                        this._updateJoystickVector(pos.x, pos.y);
+                        continue;
+                    }
+
+                    for (let key in this.buttons) {
+                        const btn = this.buttons[key];
+                        if (btn.touchId === t.identifier && typeof btn.index === 'number') {
+                            const deltaX = pos.x - btn.touchStartX;
+                            const deltaY = pos.y - btn.touchStartY;
+                            const dragDist = Math.hypot(deltaX, deltaY);
+
+                            const distToCancel = Math.hypot(pos.x - this.cancelZone.x, pos.y - this.cancelZone.y);
+                            if (distToCancel <= this.cancelZone.r + 20) {
+                                btn.aimCanceled = true;
+                                this.cancelZone.active = true;
+                            } else {
+                                btn.aimCanceled = false;
+                                this.cancelZone.active = false;
+                            }
+
+                            // Kéo vượt ngưỡng 12px: Kích hoạt Drag-Aim với Angular Lerp
+                            if (dragDist >= dragThreshold) {
+                                btn.isAiming = true;
+                                btn.targetAimAngle = Math.atan2(deltaY, deltaX);
+                                btn.aimDistRatio = Math.max(0.25, Math.min(1.0, (dragDist - dragThreshold * 0.5) / (105 * this.uiScale)));
+
+                                if (window.Game.player) {
+                                    window.Game.player.angle = btn.aimAngle;
+                                }
+                            } else {
+                                // Trong phạm vi 12px: Quick-Tap (Auto-Aim)
+                                btn.isAiming = false;
+                                btn.aimCanceled = false;
+                            }
+                        }
+                    }
+                }
+            },
+            { passive: false }
+        );
+
+        const handleTouchEnd = (e) => {
+            e.preventDefault();
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const t = e.changedTouches[i];
+
+                if (this.isEditMode) {
+                    this._handleEditPointerUp(t.identifier);
+                    continue;
+                }
+
+                if (this.joystick.active && t.identifier === this.joystick.touchId) {
+                    this.joystick.active = false;
+                    this.joystick.touchId = null;
+                    this.joystick.dx = 0;
+                    this.joystick.dy = 0;
+                }
+
+                for (let key in this.buttons) {
+                    const btn = this.buttons[key];
+                    if (btn.touchId === t.identifier) {
+                        if (key === 'attack') {
+                            this.autoFireTracker.attack.isHolding = false;
+                        }
+
+                        if (typeof btn.index === 'number') {
+                            if (!btn.aimCanceled) {
+                                if (btn.isAiming) {
+                                    // Thả tay sau khi kéo -> Kích hoạt theo hướng ngắm chính xác
+                                    this._triggerSkill(btn.index, {
+                                        manualAim: true,
+                                        aimAngle: btn.aimAngle,
+                                        distRatio: btn.aimDistRatio
+                                    }, true);
+                                } else {
+                                    // Thả tay trong phạm vi 12px -> Quick-Tap Auto-Aim
+                                    this._triggerSkill(btn.index, {
+                                        manualAim: false,
+                                        autoAimOnTap: true,
+                                        distRatio: 1.0
+                                    }, true);
+                                }
+                            } else {
+                                this._vibrate(35);
+                            }
+                        }
+
+                        btn.pressed = false;
+                        btn.touchId = null;
+                        btn.isAiming = false;
+                        btn.aimCanceled = false;
+                    }
+                }
+            }
+            this.cancelZone.active = false;
+        };
+
+        canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+        canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+    },
+
+    // ==========================================
+    // SỰ KIỆN CHUỘT (PC MOUSE AIM & CONTROLS)
+    // ==========================================
+    _bindMouseEvents: function (canvas) {
+        // Chặn contextmenu để chuột phải hoàn toàn dùng ngắm bắn ARPG
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (this.isControlLocked()) {
+                this.releaseAllInputs();
+                return;
+            }
+            const pos = this._getCanvasCoords(e.clientX, e.clientY);
+            this._updateMouseWorldPos(pos.x, pos.y);
+
+            // Nhấn Chuột Phải (button 2): Giữ để ngắm bắn tức thời
+            if (e.button === 2) {
+                e.preventDefault();
+                this.rightMouseDown = true;
+                if (window.Game.player) {
+                    const angle = Math.atan2(this.mouseWorldPos.y - window.Game.player.y, this.mouseWorldPos.x - window.Game.player.x);
+                    window.Game.player.angle = angle;
+                    this.lastAngle = angle;
+                }
+                return;
+            }
+
+            // Nhấn Chuột Trái (button 0)
+            if (e.button === 0) {
+                if (this.isEditMode) {
+                    this._handleEditPointerDown(pos.x, pos.y, 'MOUSE');
+                    return;
+                }
+
+                if (pos.x >= 12 && pos.x <= 120 && pos.y >= 12 && pos.y <= 120) {
+                    this._handleMinimapTap();
+                    return;
+                }
+
+                // Nếu đang bật Chế độ Ngắm Chuột PC hoặc đang Giữ Chuột Phải -> Click Trái là Bắn theo con trỏ chuột
+                if (this.mouseAimActive || this.rightMouseDown) {
+                    this.buttons.attack.pressed = true;
+                    this.autoFireTracker.attack.isHolding = true;
+                    this.autoFireTracker.attack.lastFireTime = 0;
+                    return;
+                }
+
+                const hit = this._findHitRightButton(pos.x, pos.y);
+                if (hit) {
+                    hit.btn.pressed = true;
+                    this.mouseDownButtonKey = hit.key;
+                    if (hit.key === 'interact') {
+                        this._triggerInteract();
+                    } else if (hit.key === 'switchWeapon') {
+                        this._triggerSwitchWeapon();
+                    } else if (hit.key === 'timeShift') {
+                        this._cycleNextTimeline();
+                    } else {
+                        hit.btn.touchStartX = pos.x;
+                        hit.btn.touchStartY = pos.y;
+                        hit.btn.isAiming = false;
+                        hit.btn.aimCanceled = false;
+                        const curAngle = (window.Game.player && window.Game.player.angle) || this.lastAngle;
+                        hit.btn.aimAngle = curAngle;
+                        hit.btn.targetAimAngle = curAngle;
+                        hit.btn.aimDistRatio = 1.0;
+
+                        if (hit.key === 'attack') {
+                            this.autoFireTracker.attack.isHolding = true;
+                            this.autoFireTracker.attack.lastFireTime = 0;
+                        }
+                    }
+                }
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            const pos = this._getCanvasCoords(e.clientX, e.clientY);
+            this._updateMouseWorldPos(pos.x, pos.y);
+
+            // Khi xoay chuột trong chế độ Mouse Aim hoặc Giữ Chuột Phải: Xoay mặt nhân vật ngay lập tức
+            if (this.mouseAimActive || this.rightMouseDown) {
+                const player = window.Game.player;
+                if (player && player.hp > 0) {
+                    const mouseAngle = Math.atan2(this.mouseWorldPos.y - player.y, this.mouseWorldPos.x - player.x);
+                    player.angle = mouseAngle;
+                    this.lastAngle = mouseAngle;
+                    this.buttons.attack.aimAngle = mouseAngle;
+                    this.buttons.attack.targetAimAngle = mouseAngle;
+                }
+            }
+
+            if (this.isEditMode && this.draggingHudKey) {
+                this._handleEditPointerMove(pos.x, pos.y, 'MOUSE');
+                return;
+            }
+
+            if (this.mouseDownButtonKey && this.buttons[this.mouseDownButtonKey]) {
+                const btn = this.buttons[this.mouseDownButtonKey];
+                if (typeof btn.index === 'number') {
+                    const deltaX = pos.x - btn.touchStartX;
+                    const deltaY = pos.y - btn.touchStartY;
+                    const dragDist = Math.hypot(deltaX, deltaY);
+                    const dragThreshold = (this.AIM_DRAG_THRESHOLD || 12) * (this.uiScale || 1.0);
+
+                    const distToCancel = Math.hypot(pos.x - this.cancelZone.x, pos.y - this.cancelZone.y);
+                    if (distToCancel <= this.cancelZone.r + 20) {
+                        btn.aimCanceled = true;
+                        this.cancelZone.active = true;
+                    } else {
+                        btn.aimCanceled = false;
+                        this.cancelZone.active = false;
+                    }
+
+                    if (dragDist >= dragThreshold) {
+                        btn.isAiming = true;
+                        btn.targetAimAngle = Math.atan2(deltaY, deltaX);
+                        btn.aimDistRatio = Math.max(0.25, Math.min(1.0, (dragDist - dragThreshold * 0.5) / (105 * this.uiScale)));
+                        if (window.Game.player) {
+                            window.Game.player.angle = btn.aimAngle;
+                        }
+                    } else {
+                        btn.isAiming = false;
+                        btn.aimCanceled = false;
+                    }
+                }
+            }
+        });
+
+        window.addEventListener('mouseup', (e) => {
+            if (e.button === 2) {
+                this.rightMouseDown = false;
+                return;
+            }
+
+            if (this.isEditMode) {
+                this._handleEditPointerUp('MOUSE');
+            }
+
+            if (this.mouseAimActive && e.button === 0) {
+                this.buttons.attack.pressed = false;
+                this.autoFireTracker.attack.isHolding = false;
+            }
+
+            if (this.mouseDownButtonKey && this.buttons[this.mouseDownButtonKey]) {
+                const btn = this.buttons[this.mouseDownButtonKey];
+                if (this.mouseDownButtonKey === 'attack') {
+                    this.autoFireTracker.attack.isHolding = false;
+                }
+
+                if (typeof btn.index === 'number') {
+                    if (!btn.aimCanceled) {
+                        if (btn.isAiming) {
+                            this._triggerSkill(btn.index, {
+                                manualAim: true,
+                                aimAngle: btn.aimAngle,
+                                distRatio: btn.aimDistRatio
+                            }, true);
+                        } else {
+                            this._triggerSkill(btn.index, {
+                                manualAim: false,
+                                autoAimOnTap: true,
+                                distRatio: 1.0
+                            }, true);
+                        }
+                    }
+                }
+                btn.pressed = false;
+                btn.isAiming = false;
+                btn.aimCanceled = false;
+                this.mouseDownButtonKey = null;
+                this.cancelZone.active = false;
+            }
+        });
+    },
+
+    // ==========================================
+    // SỰ KIỆN BÀN PHÍM (KEYBOARD BINDINGS)
+    // ==========================================
+    _bindKeyboardEvents: function () {
+        window.addEventListener('keydown', (e) => {
+            const code = e.code;
+            const key = e.key ? e.key.toLowerCase() : '';
+
+            // Bật/tắt chế độ Ngắm Chuột PC bằng phím 'F'
+            if (key === 'f' || code === 'KeyF') {
+                e.preventDefault();
+                this.toggleMouseAim();
+                return;
+            }
+
+            if (key === 'h' || code === 'KeyH') {
+                e.preventDefault();
+                this.toggleEditMode();
+                return;
+            }
+
+            if (key === 'b' || code === 'KeyB') {
+                e.preventDefault();
+                if (window.Game.Systems && typeof window.Game.Systems.toggleShop === 'function') {
+                    window.Game.Systems.toggleShop();
+                }
+                return;
+            }
+
+            if (key === 'escape' || code === 'Escape') {
+                e.preventDefault();
+                if (this.isEditMode) {
+                    this.toggleEditMode(false);
+                    return;
+                }
+                if (window.Game.Systems && typeof window.Game.Systems.togglePause === 'function') {
+                    window.Game.Systems.togglePause();
+                    return;
+                }
+                return;
+            }
+
+            if (this.isControlLocked() || this.isEditMode) {
+                this.releaseAllInputs();
+                return;
+            }
+
+            if (code === 'Tab' || key === 'tab') e.preventDefault();
+
+            this.keys[code] = true;
+            this.keys[key] = true;
+
+            if (e.repeat) return;
+
+            // Nhấn giữ phím đánh (J hoặc Space) -> Kích hoạt Hold-to-Fire
+            if (key === 'j' || code === 'KeyJ' || code === 'Space') {
+                this.buttons.attack.pressed = true;
+                this.autoFireTracker.attack.isHolding = true;
+                this.autoFireTracker.attack.lastFireTime = 0;
+            } else if (key === 'k' || code === 'KeyK') {
+                this.buttons.skill1.pressed = true;
+                this._triggerSkill(1, { manualAim: false, autoAimOnTap: true }, true);
+            } else if (key === 'l' || code === 'KeyL') {
+                this.buttons.skill2.pressed = true;
+                this._triggerSkill(2, { manualAim: false, autoAimOnTap: true }, true);
+            } else if (key === 'u' || code === 'KeyU') {
+                this.buttons.skill3.pressed = true;
+                this._triggerSkill(3, { manualAim: false, autoAimOnTap: true }, true);
+            } else if (key === 'e' || code === 'KeyE') {
+                this.buttons.interact.pressed = true;
+                this._triggerInteract();
+            } else if (code === 'Tab' || key === 'tab') {
+                this.buttons.switchWeapon.pressed = true;
+                this._triggerSwitchWeapon();
+            } else if (key === 'q' || code === 'KeyQ') {
+                this.buttons.timeShift.pressed = true;
+                this._cycleNextTimeline();
+            } else if (key === '1' || code === 'Digit1') {
+                this._triggerSwitchTimeline('PAST');
+            } else if (key === '2' || code === 'Digit2') {
+                this._triggerSwitchTimeline('PRESENT');
+            } else if (key === '3' || code === 'Digit3') {
+                this._triggerSwitchTimeline('FUTURE');
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const code = e.code;
+            const key = e.key ? e.key.toLowerCase() : '';
+
+            this.keys[code] = false;
+            this.keys[key] = false;
+
+            if (key === 'j' || code === 'KeyJ' || code === 'Space') {
+                this.buttons.attack.pressed = false;
+                this.autoFireTracker.attack.isHolding = false;
+            }
+            if (key === 'k' || code === 'KeyK') this.buttons.skill1.pressed = false;
+            if (key === 'l' || code === 'KeyL') this.buttons.skill2.pressed = false;
+            if (key === 'u' || code === 'KeyU') this.buttons.skill3.pressed = false;
+            if (key === 'e' || code === 'KeyE') this.buttons.interact.pressed = false;
+            if (code === 'Tab' || key === 'tab') this.buttons.switchWeapon.pressed = false;
+            if (key === 'q' || code === 'KeyQ') this.buttons.timeShift.pressed = false;
+        });
+
+        window.addEventListener('blur', () => {
+            this.releaseAllInputs();
+        });
+    },
+
+    // ==========================================
+    // CẬP NHẬT TRẠNG THÁI & HỒI CHIÊU (TICK LOGIC)
+    // ==========================================
+    _tickCooldowns: function () {
+        const now = performance.now() * 0.001;
+        if (!this._lastCdTickTime) this._lastCdTickTime = now;
+        const dt = Math.min(0.1, Math.max(0, now - this._lastCdTickTime));
+        this._lastCdTickTime = now;
+
+        const state = window.Game.state;
+        if (state && typeof state.timeShiftCooldown === 'number' && state.timeShiftCooldown > 0) {
+            state.timeShiftCooldown = Math.max(0, state.timeShiftCooldown - dt);
+        }
+
+        // 1. Dynamic Angular Lerp cho các nút đang kéo ngắm
+        const lerpFactor = 1.0 - Math.exp(-dt * 26);
+        for (let k in this.buttons) {
+            const btn = this.buttons[k];
+            if (btn.isAiming && typeof btn.targetAimAngle === 'number') {
+                btn.aimAngle = this._lerpAngle(btn.aimAngle, btn.targetAimAngle, lerpFactor);
+            }
+        }
+
+        // 2. Theo dõi CD và kích hoạt Hiệu ứng Lóe Sáng (Ready Flash Ring) khi chiêu vừa hồi xong
+        const combatSkills = (window.Game.Combat && typeof window.Game.Combat.getActiveSkills === 'function')
+            ? window.Game.Combat.getActiveSkills()
+            : (window.Game.Combat && window.Game.Combat.skills) || [];
+
+        for (let i = 0; i < 4; i++) {
+            const skill = combatSkills[i];
+            const currentCd = skill ? Math.max(0, skill.cd || 0) : 0;
+            const flashState = this.skillFlashStates[i];
+
+            if (flashState.prevCd > 0.05 && currentCd <= 0.01) {
+                // Vừa chuyển từ có CD sang hồi xong -> Kích hoạt flash
+                flashState.flashAlpha = 1.0;
+                flashState.flashTimer = 0.45;
+                if (i > 0) this._vibrate(8);
+            }
+            flashState.prevCd = currentCd;
+
+            if (flashState.flashAlpha > 0) {
+                flashState.flashAlpha = Math.max(0, flashState.flashAlpha - dt * 2.2);
+            }
+        }
+
+        // 3. Cơ Chế Giữ Nút Liên Thanh (Hold-to-Fire / Auto-Combo)
+        if (this.autoFireTracker.attack.isHolding && !this.isControlLocked()) {
+            const atkSkill = combatSkills[0];
+            const isAtkReady = !atkSkill || (atkSkill.cd <= 0.03);
+            const timeSinceLast = now - this.autoFireTracker.attack.lastFireTime;
+
+            if (isAtkReady && timeSinceLast >= this.autoFireTracker.attack.minInterval) {
+                this.autoFireTracker.attack.lastFireTime = now;
+                const atkBtn = this.buttons.attack;
+
+                if (atkBtn.isAiming) {
+                    // Kéo vượt ngưỡng: Bắn liên tục theo tia ngắm động
+                    this._triggerSkill(0, {
+                        manualAim: true,
+                        aimAngle: atkBtn.aimAngle,
+                        distRatio: atkBtn.aimDistRatio
+                    }, false);
+                } else if (this.mouseAimActive || this.rightMouseDown) {
+                    // Chế độ Chuột PC: Bắn theo vị trí con trỏ chuột trong thế giới
+                    const player = window.Game.player;
+                    const aimAngle = player ? Math.atan2(this.mouseWorldPos.y - player.y, this.mouseWorldPos.x - player.x) : this.lastAngle;
+                    this._triggerSkill(0, {
+                        manualAim: true,
+                        aimAngle: aimAngle,
+                        distRatio: 1.0
+                    }, false);
+                } else {
+                    // Nhấn giữ tại tâm: Auto-Combo hướng mặt + Smart Auto-Aim ±15°
+                    this._triggerSkill(0, {
+                        manualAim: false,
+                        autoAimOnTap: true,
+                        distRatio: 1.0
+                    }, false);
+                }
+            }
+        }
+
+        // 4. Update các gợn sóng xúc giác HUD (Ripples)
+        for (let i = this.ripples.length - 1; i >= 0; i--) {
+            const rp = this.ripples[i];
+            rp.r += (rp.maxR - rp.r) * Math.min(1, dt * 14);
+            rp.alpha -= dt * 3.4;
+            if (rp.alpha <= 0.02) {
+                this.ripples.splice(i, 1);
+            }
+        }
+    },
+
+    getInput: function () {
+        this._tickCooldowns();
+
+        if (this.isControlLocked() || this.isEditMode) {
+            return { dx: 0, dy: 0, angle: this.lastAngle, isMoving: false };
+        }
+
+        let dx = 0;
+        let dy = 0;
+
+        if (this.joystick.active && (Math.abs(this.joystick.dx) > 0.01 || Math.abs(this.joystick.dy) > 0.01)) {
+            dx = this.joystick.dx;
+            dy = this.joystick.dy;
+        } else {
+            const up = this.keys['w'] || this.keys['KeyW'] || this.keys['ArrowUp'];
+            const down = this.keys['s'] || this.keys['KeyS'] || this.keys['ArrowDown'];
+            const left = this.keys['a'] || this.keys['KeyA'] || this.keys['ArrowLeft'];
+            const right = this.keys['d'] || this.keys['KeyD'] || this.keys['ArrowRight'];
+
+            if (up) dy -= 1;
+            if (down) dy += 1;
+            if (left) dx -= 1;
+            if (right) dx += 1;
+
+            if (dx !== 0 || dy !== 0) {
+                const len = Math.hypot(dx, dy);
+                dx /= len;
+                dy /= len;
+                this.lastAngle = Math.atan2(dy, dx);
+            }
+        }
+
+        const isMoving = Math.hypot(dx, dy) > 0.01;
+
+        // Nếu đang trong chế độ Ngắm Chuột PC hoặc Giữ Chuột Phải -> Hướng mặt luôn hướng về con trỏ chuột
+        let angle = isMoving ? Math.atan2(dy, dx) : this.lastAngle;
+        if (this.mouseAimActive || this.rightMouseDown) {
+            const player = window.Game.player;
+            if (player) {
+                angle = Math.atan2(this.mouseWorldPos.y - player.y, this.mouseWorldPos.x - player.x);
+                this.lastAngle = angle;
+            }
+        }
+
+        return { dx, dy, angle, isMoving };
+    },
+
+    // =========================================================================
+    // TIA ĐỊNH HƯỚNG CHUẨN MOBA/ARPG & RADAR KHÓA MỤC TIÊU (AIM TRAJECTORY)
+    // =========================================================================
+    drawAimTrajectory: function (ctx, camera) {
+        const player = window.Game.player;
+        if (!player || player.hp <= 0) return;
+
+        let activeAimButton = null;
+        for (let key in this.buttons) {
+            const btn = this.buttons[key];
+            if (btn.isAiming && typeof btn.index === 'number') {
+                activeAimButton = btn;
+                break;
+            }
+        }
+
+        const isMouseAiming = (this.mouseAimActive || this.rightMouseDown) && !activeAimButton;
+        if (!activeAimButton && !isMouseAiming) return;
+
+        const camX = (camera && camera.x) || (window.Game.camera && window.Game.camera.x) || 0;
+        const camY = (camera && camera.y) || (window.Game.camera && window.Game.camera.y) || 0;
+        const zoom = (camera && camera.zoom) || (window.Game.camera && window.Game.camera.zoom) || 1.0;
+
+        const px = (player.x - camX) * zoom;
+        const py = (player.y - camY) * zoom;
+
+        const skillIdx = activeAimButton ? activeAimButton.index : 0;
+        const aimConfig = (window.Game.Combat && typeof window.Game.Combat.getSkillAimConfig === 'function')
+            ? window.Game.Combat.getSkillAimConfig(skillIdx)
+            : { type: 'LINE', range: 430, color: '#00f2fe' };
+
+        const angle = activeAimButton
+            ? activeAimButton.aimAngle
+            : Math.atan2(this.mouseWorldPos.y - player.y, this.mouseWorldPos.x - player.x);
+        const distRatio = activeAimButton ? (activeAimButton.aimDistRatio || 1.0) : 1.0;
+        const isCanceled = activeAimButton ? activeAimButton.aimCanceled : false;
+
+        // Kiểm tra nhiệt độ súng Laser để cảnh báo nhấp nháy
+        const weaponHeat = (window.Game.Combat && window.Game.Combat.weaponHeat) || 0;
+        const isOverheating = (aimConfig.type === 'LASER' && weaponHeat >= 60);
+        const now = performance.now() * 0.001;
+
+        let mainColor = isCanceled ? '#ef4444' : (aimConfig.color || '#00f2fe');
+        let glowColor = isCanceled ? '#dc2626' : (aimConfig.glow || '#38bdf8');
+
+        if (isOverheating && !isCanceled) {
+            const flash = Math.sin(now * 12) > 0;
+            mainColor = flash ? '#ef4444' : '#f97316';
+            glowColor = '#ff0033';
+        }
+
+        const maxRangeWorld = aimConfig.range || 420;
+        const targetDist = maxRangeWorld * distRatio * zoom;
+        const targetX = px + Math.cos(angle) * targetDist;
+        const targetY = py + Math.sin(angle) * targetDist;
+
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        // 1. Vẽ Khung Nón Hỗ Trợ Ngắm Nhỏ (±15° = ±0.2618 rad) mờ tinh tế quanh trục ngắm
+        if (aimConfig.type === 'LASER' || aimConfig.type === 'CANNON_AOE' || aimConfig.type === 'LINE') {
+            const coneHalfAngle = 15 * (Math.PI / 180);
+            ctx.beginPath();
+            ctx.moveTo(px, py);
+            ctx.arc(px, py, targetDist, angle - coneHalfAngle, angle + coneHalfAngle);
+            ctx.closePath();
+            ctx.fillStyle = isCanceled
+                ? 'rgba(239, 68, 68, 0.05)'
+                : (isOverheating ? 'rgba(249, 115, 22, 0.08)' : 'rgba(0, 242, 254, 0.06)');
+            ctx.fill();
+
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = isCanceled
+                ? 'rgba(239, 68, 68, 0.25)'
+                : (isOverheating ? 'rgba(249, 115, 22, 0.35)' : 'rgba(0, 242, 254, 0.22)');
+            ctx.stroke();
+        }
+
+        // 2. Vòng tròn định vị dưới chân nhân vật
+        ctx.beginPath();
+        ctx.arc(px, py, (player.radius || 20) * zoom + 4, 0, Math.PI * 2);
+        ctx.strokeStyle = mainColor;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.65;
+        ctx.stroke();
+        ctx.globalAlpha = 1.0;
+
+        // 3. Đường quỹ đạo ngắm chính
+        if (aimConfig.type === 'CANNON_AOE') {
+            // Quỹ đạo đạn pháo: Đường cong chấm bi Parabol từ nhân vật đến điểm nổ
+            const midX = (px + targetX) * 0.5;
+            const midY = (py + targetY) * 0.5 - 45 * zoom; // Vòm cung đạn pháo
+
+            ctx.setLineDash([8, 6]);
+            ctx.lineDashOffset = -(now * 30) % 14;
+            ctx.strokeStyle = mainColor;
+            ctx.lineWidth = 2.5 * this.uiScale;
+            ctx.shadowColor = glowColor;
+            ctx.shadowBlur = 10;
+
+            ctx.beginPath();
+            ctx.moveTo(px, py);
+            ctx.quadraticCurveTo(midX, midY, targetX, targetY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Tâm nổ 2 VÒNG: Vòng ngoài 55% lan, Vòng trong 40% bán kính (Tâm Nổ 100% sát thương)
+            const aoeR = (aimConfig.aoeRadius || 100) * zoom;
+            const sweetSpotR = aoeR * 0.40;
+
+            // Vòng ngoài lan 55%
+            ctx.beginPath();
+            ctx.arc(targetX, targetY, aoeR, 0, Math.PI * 2);
+            ctx.fillStyle = isCanceled ? 'rgba(239, 68, 68, 0.12)' : 'rgba(0, 242, 254, 0.12)';
+            ctx.fill();
+            ctx.lineWidth = 1.8 * this.uiScale;
+            ctx.strokeStyle = isCanceled ? '#ef4444' : 'rgba(0, 242, 254, 0.7)';
+            ctx.stroke();
+
+            // Vòng trong Tâm Nổ 100% sát thương (Sweet Spot)
+            ctx.beginPath();
+            ctx.arc(targetX, targetY, sweetSpotR, 0, Math.PI * 2);
+            ctx.fillStyle = isCanceled ? 'rgba(220, 38, 38, 0.35)' : 'rgba(249, 115, 22, 0.35)';
+            ctx.fill();
+            ctx.lineWidth = 2.5 * this.uiScale;
+            ctx.strokeStyle = isCanceled ? '#fca5a5' : '#f97316';
+            ctx.shadowColor = '#f97316';
+            ctx.shadowBlur = 12;
+            ctx.stroke();
+
+            // Điểm crosshair tâm nổ
+            ctx.beginPath();
+            ctx.arc(targetX, targetY, 4 * this.uiScale, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+        } else if (aimConfig.type === 'LASER') {
+            const beamW = (aimConfig.beamWidth || 20) * 0.5 * zoom;
+            const perpX = Math.cos(angle + Math.PI / 2) * beamW;
+            const perpY = Math.sin(angle + Math.PI / 2) * beamW;
+
+            ctx.beginPath();
+            ctx.moveTo(px + perpX, py + perpY);
+            ctx.lineTo(targetX + perpX, targetY + perpY);
+            ctx.lineTo(targetX - perpX, targetY - perpY);
+            ctx.lineTo(px - perpX, py - perpY);
+            ctx.closePath();
+
+            ctx.fillStyle = isCanceled
+                ? 'rgba(239, 68, 68, 0.15)'
+                : (isOverheating ? 'rgba(239, 68, 68, 0.25)' : 'rgba(0, 242, 254, 0.16)');
+            ctx.fill();
+
+            ctx.lineWidth = 1.8 * this.uiScale;
+            ctx.strokeStyle = mainColor;
+            ctx.stroke();
+
+            // Tia sáng lõi giữa
+            const dashOffset = -(now * 50) % 20;
+            ctx.setLineDash([12, 8]);
+            ctx.lineDashOffset = dashOffset;
+            ctx.strokeStyle = isOverheating ? '#fef08a' : '#ffffff';
+            ctx.lineWidth = 2.2 * this.uiScale;
+            ctx.shadowColor = glowColor;
+            ctx.shadowBlur = 12;
+
+            ctx.beginPath();
+            ctx.moveTo(px, py);
+            ctx.lineTo(targetX, targetY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Cảnh báo súng quá nhiệt bằng chữ nổi trên tia ngắm
+            if (isOverheating) {
+                ctx.save();
+                ctx.font = `bold ${Math.round(11 * this.uiScale)}px sans-serif`;
+                ctx.fillStyle = '#ef4444';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                ctx.shadowColor = '#000000';
+                ctx.shadowBlur = 4;
+                ctx.fillText('🔥 SÚNG QUÁ NHIỆT!', targetX, targetY - 14 * this.uiScale);
+                ctx.restore();
+            }
+        } else {
+            // Mặc định hoặc Tia Thẳng Chuẩn
+            const dashOffset = -(now * 40) % 18;
+            ctx.setLineDash([10, 8]);
+            ctx.lineDashOffset = dashOffset;
+            ctx.strokeStyle = mainColor;
+            ctx.lineWidth = 3.2 * this.uiScale;
+            ctx.shadowColor = glowColor;
+            ctx.shadowBlur = 12;
+
+            ctx.beginPath();
+            ctx.moveTo(px, py);
+            ctx.lineTo(targetX, targetY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            if (targetDist > 20) {
+                const arrowLen = 12 * this.uiScale;
+                ctx.beginPath();
+                ctx.moveTo(targetX, targetY);
+                ctx.lineTo(targetX - Math.cos(angle - 0.4) * arrowLen, targetY - Math.sin(angle - 0.4) * arrowLen);
+                ctx.lineTo(targetX - Math.cos(angle + 0.4) * arrowLen, targetY - Math.sin(angle + 0.4) * arrowLen);
+                ctx.closePath();
+                ctx.fillStyle = mainColor;
+                ctx.fill();
+            }
+        }
+
+        // 4. RADAR KHÓA MỤC TIÊU (LOCK-ON RETICLE): Quét quái trong phạm vi nón ±15°
+        this._drawLockOnReticle(ctx, px, py, angle, maxRangeWorld, camX, camY, zoom, now);
+
+        ctx.restore();
+    },
+
+    /**
+     * VẼ TÂM NGẮM SCI-FI 4 GÓC XOAY ĐỘNG (LOCK-ON CROSSHAIR) TRÊN QUÁI ƯU TIÊN
+     */
+    _drawLockOnReticle: function (ctx, playerScreenX, playerScreenY, aimAngle, maxRangeWorld, camX, camY, zoom, now) {
+        if (!window.Game.Enemies || typeof window.Game.Enemies.getActiveList !== 'function') return;
+
+        const enemies = window.Game.Enemies.getActiveList();
+        if (!enemies || enemies.length === 0) return;
+
+        const player = window.Game.player;
+        if (!player) return;
+
+        const coneHalfRad = 15 * (Math.PI / 180);
+        let bestTarget = null;
+        let minScore = Infinity;
+
+        for (let i = 0; i < enemies.length; i++) {
+            const e = enemies[i];
+            if (!e || e.hp <= 0) continue;
+
+            const edx = e.x - player.x;
+            const edy = e.y - player.y;
+            const dist = Math.hypot(edx, edy);
+
+            if (dist > maxRangeWorld + 30) continue;
+
+            const enemyAngle = Math.atan2(edy, edx);
+            let diff = Math.abs((enemyAngle - aimAngle) % (Math.PI * 2));
+            if (diff > Math.PI) diff = Math.PI * 2 - diff;
+
+            if (diff <= coneHalfRad) {
+                // Điểm ưu tiên: kết hợp giữa cự ly và độ lệch góc
+                const score = dist * 0.6 + diff * 320;
+                if (score < minScore) {
+                    minScore = score;
+                    bestTarget = e;
+                }
+            }
+        }
+
+        if (!bestTarget) return;
+
+        const ex = (bestTarget.x - camX) * zoom;
+        const ey = (bestTarget.y - camY) * zoom;
+        const r = Math.max(18, (bestTarget.radius || 24) * zoom + 6);
+        const rot = now * 2.8;
+
+        ctx.save();
+        ctx.translate(ex, ey);
+
+        // Vòng tròn chấm Sci-Fi
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 4 Góc ngắm Sci-Fi xoay động
+        ctx.rotate(rot);
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2.5 * this.uiScale;
+        ctx.shadowColor = '#ff003b';
+        ctx.shadowBlur = 10;
+
+        const cornerLen = r * 0.45;
+        for (let a = 0; a < 4; a++) {
+            ctx.save();
+            ctx.rotate((a * Math.PI) / 2);
+            ctx.beginPath();
+            ctx.moveTo(r, r - cornerLen);
+            ctx.lineTo(r, r);
+            ctx.lineTo(r - cornerLen, r);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        // Chấm đỏ tâm và chữ LOCKED
+        ctx.rotate(-rot);
+        ctx.beginPath();
+        ctx.arc(0, 0, 3 * this.uiScale, 0, Math.PI * 2);
+        ctx.fillStyle = '#fde047';
+        ctx.fill();
+
+        ctx.fillStyle = '#ef4444';
+        ctx.font = `bold ${Math.round(8 * this.uiScale)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText('TARGET LOCKED', 0, r + 4);
+
+        ctx.restore();
+    },
+
+    // =========================================================================
+    // VẼ TOÀN BỘ GIAO DIỆN HUD (DRAW UI)
+    // =========================================================================
+    drawUI: function (ctx, width, height, camera) {
+        const w = width || (ctx.canvas && ctx.canvas.width) || window.innerWidth;
+        const h = height || (ctx.canvas && ctx.canvas.height) || window.innerHeight;
+
+        this.drawAimTrajectory(ctx, camera);
+
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+        if (this.isEditMode) {
+            this._drawEditModeBackground(ctx, w, h);
+        }
+
+        this._drawCancelZone(ctx);
+        this._drawJoystick(ctx);
+
+        const defaultSkills = [
+            { name: 'Đánh', cd: 0, maxCd: 0.5, color: '#f59e0b' },
+            { name: 'Lướt Chém', cd: 0, maxCd: 5.2, color: '#00f2fe' },
+            { name: 'Siêu Bão', cd: 0, maxCd: 11.0, color: '#ff0844' },
+            { name: 'Ngưng Đọng', cd: 0, maxCd: 22.0, color: '#a855f7' }
+        ];
+
+        const combatSkills = (window.Game.Combat && typeof window.Game.Combat.getActiveSkills === 'function')
+            ? window.Game.Combat.getActiveSkills()
+            : (window.Game.Combat && window.Game.Combat.skills) || defaultSkills;
+
+        // Nút Đánh (Attack Button với Heat Gauge & Tên Vũ Khí)
+        this._drawAttackButton(ctx, this.buttons.attack, combatSkills[0] || defaultSkills[0]);
+        // Các nút Kỹ năng (có Flash Ring khi hồi xong)
+        this._drawSkillButton(ctx, this.buttons.skill1, combatSkills[1] || defaultSkills[1], 1);
+        this._drawSkillButton(ctx, this.buttons.skill2, combatSkills[2] || defaultSkills[2], 2);
+        this._drawRageSkillButton(ctx, this.buttons.skill3, combatSkills[3] || defaultSkills[3]);
+
+        this._drawSwitchWeaponButton(ctx);
+        this._drawTimeShiftButton(ctx);
+        this._drawInteractButton(ctx);
+
+        // Hiển thị trạng thái Chế độ Ngắm Chuột PC ở góc trên
+        if (this.mouseAimActive) {
+            this._drawMouseAimIndicator(ctx, w);
+        }
+
+        this._drawRipples(ctx);
+
+        if (this.isEditMode) {
+            this._drawEditModeToolbarAndRings(ctx, w, h);
+        }
+
+        ctx.restore();
+    },
+
+    _drawMouseAimIndicator: function (ctx, width) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx.strokeStyle = '#00f2fe';
+        ctx.lineWidth = 1.5;
+        const rectW = 210 * this.uiScale;
+        const rectH = 26 * this.uiScale;
+        const rx = (width - rectW) * 0.5;
+        const ry = 14 * this.uiScale;
+
+        ctx.beginPath();
+        ctx.roundRect ? ctx.roundRect(rx, ry, rectW, rectH, 6) : ctx.rect(rx, ry, rectW, rectH);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#00f2fe';
+        ctx.font = `bold ${Math.round(10 * this.uiScale)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('🎯 PC MOUSE AIM ON [F: TẮT]', width * 0.5, ry + rectH * 0.5);
+        ctx.restore();
+    },
+
+    _drawCancelZone: function (ctx) {
+        let isAnyAiming = false;
+        for (let key in this.buttons) {
+            if (this.buttons[key].isAiming) {
+                isAnyAiming = true;
+                break;
+            }
+        }
+        if (!isAnyAiming) return;
+
+        const cz = this.cancelZone;
+        const isActive = cz.active;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cz.x, cz.y, cz.r * (isActive ? 1.15 : 1.0), 0, Math.PI * 2);
+        ctx.fillStyle = isActive ? 'rgba(239, 68, 68, 0.85)' : 'rgba(15, 23, 42, 0.72)';
+        ctx.fill();
+
+        ctx.lineWidth = 2.5 * this.uiScale;
+        ctx.strokeStyle = isActive ? '#fecaca' : '#ef4444';
+        ctx.shadowColor = '#ef4444';
+        ctx.shadowBlur = isActive ? 16 : 8;
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `bold ${Math.round(11 * this.uiScale)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(isActive ? 'THẢ ĐỂ HỦY' : 'HỦY CHIÊU', cz.x, cz.y);
+        ctx.restore();
+    },
+
+    _drawEditModeBackground: function (ctx, width, height) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(2, 6, 23, 0.55)';
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.strokeStyle = 'rgba(0, 229, 255, 0.08)';
+        ctx.lineWidth = 1;
+        const step = 40;
+        for (let x = step; x < width; x += step) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, height);
+            ctx.stroke();
+        }
+        for (let y = step; y < height; y += step) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+            ctx.stroke();
+        }
+        ctx.restore();
+    },
+
+    _drawEditModeToolbarAndRings: function (ctx, width, height) {
+        this._updateEditToolbarRects(width, height);
+
+        ctx.save();
+        const centerX = width * 0.5;
+        const topY = Math.max(16, 20 * (this.uiScale || 1.0));
+
+        const panelW = Math.min(width - 24, 420);
+        const panelH = 92;
+        const panelX = centerX - panelW / 2;
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+        ctx.strokeStyle = '#00e5ff';
+        ctx.lineWidth = 2;
+        ctx.fillRect(panelX, topY, panelW, panelH);
+        ctx.strokeRect(panelX, topY, panelW, panelH);
+
+        ctx.fillStyle = '#fde047';
+        ctx.font = 'bold 13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('⚙️ TÙY CHỈNH VỊ TRÍ NÚT: Chạm & Kéo nút bất kỳ', centerX, topY + 22);
+
+        const sRect = this.editToolbarRects.save;
+        ctx.fillStyle = '#10b981';
+        ctx.fillRect(sRect.x, sRect.y, sRect.w, sRect.h);
+        ctx.strokeStyle = '#a7f3d0';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(sRect.x, sRect.y, sRect.w, sRect.h);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText('💾 LƯU LẠI', sRect.x + sRect.w / 2, sRect.y + sRect.h / 2);
+
+        const rRect = this.editToolbarRects.reset;
+        ctx.fillStyle = '#3b82f6';
+        ctx.fillRect(rRect.x, rRect.y, rRect.w, rRect.h);
+        ctx.strokeStyle = '#bfdbfe';
+        ctx.strokeRect(rRect.x, rRect.y, rRect.w, rRect.h);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('🔄 MẶC ĐỊNH', rRect.x + rRect.w / 2, rRect.y + rRect.h / 2);
+
+        const cRect = this.editToolbarRects.cancel;
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(cRect.x, cRect.y, cRect.w, cRect.h);
+        ctx.strokeStyle = '#fecaca';
+        ctx.strokeRect(cRect.x, cRect.y, cRect.w, cRect.h);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('✕ THOÁT', cRect.x + cRect.w / 2, cRect.y + cRect.h / 2);
+
+        for (let k in this.buttons) {
+            const b = this.buttons[k];
+            const isDragging = this.draggingHudKey === k;
+            ctx.save();
+            ctx.strokeStyle = isDragging ? '#fde047' : '#00e5ff';
+            ctx.lineWidth = isDragging ? 3 : 2;
+            ctx.setLineDash([5, 4]);
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.r + 7, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        const isJoyDragging = this.draggingHudKey === 'joystick';
+        ctx.save();
+        ctx.strokeStyle = isJoyDragging ? '#fde047' : '#00e5ff';
+        ctx.lineWidth = isJoyDragging ? 3 : 2;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        ctx.arc(this.joystick.originX, this.joystick.originY, this.joystick.maxRadius + 7, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.restore();
+    },
+
+    _drawRipples: function (ctx) {
+        if (!this.ripples || this.ripples.length === 0) return;
+        const uiScale = this.uiScale || 1.0;
+        ctx.save();
+        for (let i = 0; i < this.ripples.length; i++) {
+            const rp = this.ripples[i];
+            ctx.beginPath();
+            ctx.arc(rp.x, rp.y, rp.r, 0, Math.PI * 2);
+            ctx.strokeStyle = rp.color;
+            ctx.globalAlpha = Math.max(0, rp.alpha);
+            ctx.lineWidth = 3 * uiScale;
+            ctx.shadowColor = rp.color;
+            ctx.shadowBlur = 10 * uiScale;
+            ctx.stroke();
+        }
+        ctx.restore();
+    },
+
+    _drawJoystick: function (ctx) {
+        const j = this.joystick;
+        const alpha = (j.active || this.isEditMode) ? 0.88 : 0.42;
+        const uiScale = this.uiScale || 1.0;
+        const isPulling = j.active && Math.hypot(j.dx, j.dy) > 0.05;
+
+        ctx.save();
+
+        ctx.beginPath();
+        ctx.arc(j.originX, j.originY, j.maxRadius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(15, 23, 42, ${alpha * 0.58})`;
+        ctx.fill();
+        ctx.lineWidth = 2.5 * uiScale;
+        ctx.strokeStyle = isPulling ? 'rgba(56, 189, 248, 0.9)' : `rgba(148, 163, 184, ${alpha})`;
+        ctx.stroke();
+
+        if (isPulling) {
+            const dirAngle = j.angle;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(j.originX, j.originY, j.maxRadius + 3 * uiScale, dirAngle - 0.48, dirAngle + 0.48);
+            ctx.strokeStyle = '#00f2fe';
+            ctx.lineWidth = 3.5 * uiScale;
+            ctx.shadowColor = '#00f2fe';
+            ctx.shadowBlur = 10 * uiScale;
+            ctx.stroke();
+
+            const arrowDist = j.maxRadius + 11 * uiScale;
+            const tipX = j.originX + Math.cos(dirAngle) * arrowDist;
+            const tipY = j.originY + Math.sin(dirAngle) * arrowDist;
+            const sideAngle = 0.22;
+            const baseDist = j.maxRadius + 2 * uiScale;
+
+            ctx.beginPath();
+            ctx.moveTo(tipX, tipY);
+            ctx.lineTo(j.originX + Math.cos(dirAngle - sideAngle) * baseDist, j.originY + Math.sin(dirAngle - sideAngle) * baseDist);
+            ctx.lineTo(j.originX + Math.cos(dirAngle + sideAngle) * baseDist, j.originY + Math.sin(dirAngle + sideAngle) * baseDist);
+            ctx.closePath();
+            ctx.fillStyle = '#38bdf8';
+            ctx.fill();
+            ctx.restore();
+        }
+
+        const knobRadius = 22 * uiScale;
+        ctx.beginPath();
+        ctx.arc(j.currentX, j.currentY, knobRadius, 0, Math.PI * 2);
+        ctx.fillStyle = j.active ? 'rgba(56, 189, 248, 0.92)' : 'rgba(203, 213, 225, 0.5)';
+        ctx.fill();
+        ctx.lineWidth = 2 * uiScale;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.stroke();
+
+        ctx.restore();
+    },
+
+    /**
+     * VẼ NÚT ĐÁNH CHÍNH (ATTACK BUTTON):
+     * - Tên/Biểu tượng vũ khí hiện tại (Kiếm Cyber, Laser Gun, Chrono Cannon)
+     * - Thanh vòng nhiệt (Heat Gauge Ring) quanh viền nút khi cầm Laser Gun
+     * - Ready Flash Ring khi hồi xong
+     */
+    _drawAttackButton: function (ctx, btn, skillData) {
+        const uiScale = this.uiScale || 1.0;
+        const scale = btn.pressed ? 0.91 : 1.0;
+        const r = btn.r * scale;
+
+        const currentWeapon = (window.Game.Combat && window.Game.Combat.currentWeapon)
+            || (window.Game.state && window.Game.state.weapon) || 'cyber_sword';
+
+        let weaponLabel = 'KIẾM';
+        let weaponIcon = '⚔️';
+        if (currentWeapon === 'laser_gun') {
+            weaponLabel = 'LASER';
+            weaponIcon = '⚡';
+        } else if (currentWeapon === 'chrono_cannon') {
+            weaponLabel = 'PHÁO';
+            weaponIcon = '💥';
+        }
+
+        const cd = Math.max(0, (skillData && skillData.cd) || 0);
+        const maxCd = Math.max(0.001, (skillData && skillData.maxCd) || 0.4);
+        const isOnCooldown = cd > 0.01;
+        const color = (skillData && skillData.color) || '#f59e0b';
+
+        ctx.save();
+
+        // 1. Hiệu ứng Flash Ring khi vừa hồi chiêu xong
+        const flash = this.skillFlashStates[0];
+        if (flash.flashAlpha > 0.01) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(btn.x, btn.y, r + 7 * uiScale + (1.0 - flash.flashAlpha) * 8 * uiScale, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255, 255, 255, ${flash.flashAlpha * 0.95})`;
+            ctx.lineWidth = 3.5 * uiScale;
+            ctx.shadowColor = '#ffffff';
+            ctx.shadowBlur = 14 * uiScale;
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        // 2. Viền phát sáng khi bấm giữ
+        if (btn.pressed && !isOnCooldown) {
+            ctx.beginPath();
+            ctx.arc(btn.x, btn.y, r + 6 * uiScale, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.35;
+            ctx.fill();
+            ctx.globalAlpha = 1.0;
+        }
+
+        // Nền nút
+        ctx.beginPath();
+        ctx.arc(btn.x, btn.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(btn.x, btn.y, r - 3 * uiScale, 0, Math.PI * 2);
+        ctx.fillStyle = isOnCooldown ? 'rgba(51, 65, 85, 0.7)' : color;
+        ctx.globalAlpha = isOnCooldown ? 0.45 : (btn.pressed ? 0.95 : 0.82);
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+
+        ctx.beginPath();
+        ctx.arc(btn.x, btn.y, r, 0, Math.PI * 2);
+        ctx.lineWidth = 3.5 * uiScale;
+        ctx.strokeStyle = isOnCooldown ? 'rgba(148, 163, 184, 0.5)' : (btn.pressed ? '#fde047' : '#ffffff');
+        ctx.stroke();
+
+        // 3. Thanh Vòng Nhiệt (Heat Gauge Ring) quanh viền nút nếu đang cầm Laser Gun
+        if (currentWeapon === 'laser_gun') {
+            const heat = Math.max(0, Math.min(100, (window.Game.Combat && window.Game.Combat.weaponHeat) || 0));
+            if (heat > 0) {
+                const heatRatio = heat / 100;
+                const startA = -Math.PI / 2;
+                const endA = startA + heatRatio * Math.PI * 2;
+
+                let heatColor = '#00f2fe';
+                if (heat >= 80) heatColor = '#ef4444';
+                else if (heat >= 50) heatColor = '#f59e0b';
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(btn.x, btn.y, r + 3.5 * uiScale, startA, endA);
+                ctx.strokeStyle = heatColor;
+                ctx.lineWidth = 3.5 * uiScale;
+                ctx.shadowColor = heatColor;
+                ctx.shadowBlur = heat >= 80 ? 12 : 6;
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        // Chữ Tên Vũ Khí & Icon
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `bold ${Math.round(11 * uiScale)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${weaponIcon} ${weaponLabel}`, btn.x, btn.y - (isOnCooldown ? 9 * uiScale : 1 * uiScale));
+
+        // Cooldown Overlay nếu đang hồi chiêu
+        if (isOnCooldown) {
+            const ratio = Math.min(1, Math.max(0, cd / maxCd));
+            const startAngle = -Math.PI / 2;
+            const endAngle = startAngle + ratio * Math.PI * 2;
+
+            ctx.beginPath();
+            ctx.moveTo(btn.x, btn.y);
+            ctx.arc(btn.x, btn.y, r, startAngle, endAngle, false);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.68)';
+            ctx.fill();
+
+            ctx.fillStyle = '#fde047';
+            ctx.font = `bold ${Math.round(12 * uiScale)}px sans-serif`;
+            ctx.fillText(cd.toFixed(1), btn.x, btn.y + 6 * uiScale);
+        }
+
+        this._drawKeyBadge(ctx, btn, r);
+        ctx.restore();
+    },
+
+    _drawSkillButton: function (ctx, btn, skillData, skillIndex) {
+        const name = (skillData && skillData.name) || 'Kỹ năng';
+        const cd = Math.max(0, (skillData && skillData.cd) || 0);
+        const maxCd = Math.max(0.001, (skillData && skillData.maxCd) || 1);
+        const color = (skillData && skillData.color) || '#38bdf8';
+        const isOnCooldown = cd > 0.01;
+        const uiScale = this.uiScale || 1.0;
+
+        const scale = btn.pressed ? 0.91 : 1.0;
+        const r = btn.r * scale;
+
+        ctx.save();
+
+        // 1. Hiệu ứng Flash Ring khi vừa hồi chiêu xong
+        if (typeof skillIndex === 'number' && this.skillFlashStates[skillIndex]) {
+            const flash = this.skillFlashStates[skillIndex];
+            if (flash.flashAlpha > 0.01) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(btn.x, btn.y, r + 6 * uiScale + (1.0 - flash.flashAlpha) * 8 * uiScale, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(255, 255, 255, ${flash.flashAlpha * 0.95})`;
+                ctx.lineWidth = 3.5 * uiScale;
+                ctx.shadowColor = '#ffffff';
+                ctx.shadowBlur = 14 * uiScale;
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        if (btn.pressed && !isOnCooldown) {
+            ctx.beginPath();
+            ctx.arc(btn.x, btn.y, r + 5 * uiScale, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.32;
+            ctx.fill();
+            ctx.globalAlpha = 1.0;
+        }
+
+        ctx.beginPath();
+        ctx.arc(btn.x, btn.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(btn.x, btn.y, r - 3 * uiScale, 0, Math.PI * 2);
+        ctx.fillStyle = isOnCooldown ? 'rgba(51, 65, 85, 0.7)' : color;
+        ctx.globalAlpha = isOnCooldown ? 0.45 : (btn.pressed ? 0.95 : 0.78);
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+
+        ctx.beginPath();
+        ctx.arc(btn.x, btn.y, r, 0, Math.PI * 2);
+        ctx.lineWidth = 2.5 * uiScale;
+        ctx.strokeStyle = isOnCooldown ? 'rgba(148, 163, 184, 0.5)' : (btn.pressed ? '#fde047' : '#f8fafc');
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `bold ${Math.round(9.5 * uiScale)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const shortName = name.length > 10 ? name.substring(0, 9) + '…' : name;
+        ctx.fillText(shortName, btn.x, btn.y - (isOnCooldown ? 10 * uiScale : 0));
+
+        if (isOnCooldown) {
+            const ratio = Math.min(1, Math.max(0, cd / maxCd));
+            const startAngle = -Math.PI / 2;
+            const endAngle = startAngle + ratio * Math.PI * 2;
+
+            ctx.beginPath();
+            ctx.moveTo(btn.x, btn.y);
+            ctx.arc(btn.x, btn.y, r, startAngle, endAngle, false);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.68)';
+            ctx.fill();
+
+            ctx.fillStyle = '#fde047';
+            ctx.font = `bold ${Math.round(13 * uiScale)}px sans-serif`;
+            const cdText = cd < 10 ? cd.toFixed(1) : Math.ceil(cd).toString();
+            ctx.fillText(cdText, btn.x, btn.y + 5 * uiScale);
+        }
+
+        this._drawKeyBadge(ctx, btn, r);
+        ctx.restore();
+    },
+
+    _drawRageSkillButton: function (ctx, btn, skillData) {
+        const rage = Math.max(0, Math.min(100, (window.Game.state && window.Game.state.rage) || 0));
+        const rageRatio = rage / 100;
+        const isReady = rage >= 100;
+        const uiScale = this.uiScale || 1.0;
+        const scale = btn.pressed ? 0.91 : 1.0;
+        const r = btn.r * scale;
+        const now = performance.now() * 0.001;
+
+        ctx.save();
+
+        if (isReady || btn.pressed) {
+            const pulseR = r + 5 * uiScale + Math.sin(now * 8) * 3.5 * uiScale;
+            ctx.beginPath();
+            ctx.arc(btn.x, btn.y, pulseR, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(34, 211, 238, 0.95)';
+            ctx.shadowColor = '#00f2fe';
+            ctx.shadowBlur = 14 * uiScale;
+            ctx.lineWidth = 3.5 * uiScale;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+        }
+
+        ctx.beginPath();
+        ctx.arc(btn.x, btn.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+        ctx.fill();
+
+        if (rageRatio > 0) {
+            const startAngle = -Math.PI / 2;
+            const endAngle = startAngle + rageRatio * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(btn.x, btn.y);
+            ctx.arc(btn.x, btn.y, r - 3 * uiScale, startAngle, endAngle, false);
+            ctx.closePath();
+            ctx.fillStyle = isReady ? '#06b6d4' : 'rgba(245, 158, 11, 0.65)';
+            ctx.fill();
+        }
+
+        ctx.beginPath();
+        ctx.arc(btn.x, btn.y, r, 0, Math.PI * 2);
+        ctx.lineWidth = (isReady ? 3 : 2) * uiScale;
+        ctx.strokeStyle = isReady ? '#a5f3fc' : 'rgba(148, 163, 184, 0.55)';
+        ctx.stroke();
+
+        ctx.fillStyle = isReady ? '#ffffff' : '#e2e8f0';
+        ctx.font = `bold ${Math.round(9 * uiScale)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const title = (skillData && skillData.name) || 'NGƯNG ĐỌNG';
+        ctx.fillText(title.substring(0, 10), btn.x, btn.y - 7 * uiScale);
+
+        ctx.fillStyle = isReady ? '#fde047' : '#38bdf8';
+        ctx.font = `bold ${Math.round(11 * uiScale)}px sans-serif`;
+        ctx.fillText(isReady ? 'MAX NỘ!' : `${Math.floor(rage)}%`, btn.x, btn.y + 7 * uiScale);
+
+        this._drawKeyBadge(ctx, btn, r);
+        ctx.restore();
+    },
+
+    _drawSwitchWeaponButton: function (ctx) {
+        const btn = this.buttons.switchWeapon;
+        const uiScale = this.uiScale || 1.0;
+        const scale = btn.pressed ? 0.91 : 1.0;
+        const r = btn.r * scale;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(btn.x, btn.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(30, 41, 59, 0.85)';
+        ctx.fill();
+        ctx.lineWidth = 2 * uiScale;
+        ctx.strokeStyle = btn.pressed ? '#fde047' : '#38bdf8';
+        ctx.stroke();
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = `bold ${Math.round(8.5 * uiScale)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('ĐỔI VK', btn.x, btn.y - 4 * uiScale);
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = `bold ${Math.round(8 * uiScale)}px sans-serif`;
+        ctx.fillText('[Tab]', btn.x, btn.y + 7 * uiScale);
+        ctx.restore();
+    },
+
+    _drawTimeShiftButton: function (ctx) {
+        const btn = this.buttons.timeShift;
+        const uiScale = this.uiScale || 1.0;
+        const scale = btn.pressed ? 0.91 : 1.0;
+        const r = btn.r * scale;
+
+        const state = window.Game.state || {};
+        const timeline = state.timeline || 'PRESENT';
+        const cd = typeof state.timeShiftCooldown === 'number' ? Math.max(0, state.timeShiftCooldown) : 0;
+        const maxCd = 4.0;
+        const isOnCooldown = cd > 0.05;
+
+        const timelineColors = { PAST: '#f59e0b', PRESENT: '#10b981', FUTURE: '#06b6d4' };
+        const nextTimelineMap = { PAST: 'PRESENT', PRESENT: 'FUTURE', FUTURE: 'PAST' };
+        const nextTl = nextTimelineMap[timeline] || 'PAST';
+        const mainColor = timelineColors[timeline] || '#38bdf8';
+        const nextColor = timelineColors[nextTl] || '#38bdf8';
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(btn.x, btn.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(btn.x, btn.y, r - 2.5 * uiScale, 0, Math.PI * 2);
+        ctx.fillStyle = isOnCooldown ? 'rgba(51, 65, 85, 0.65)' : mainColor;
+        ctx.globalAlpha = isOnCooldown ? 0.35 : 0.78;
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+
+        ctx.beginPath();
+        ctx.arc(btn.x, btn.y, r, 0, Math.PI * 2);
+        ctx.lineWidth = 2 * uiScale;
+        ctx.strokeStyle = isOnCooldown ? 'rgba(148, 163, 184, 0.45)' : nextColor;
+        ctx.stroke();
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = `bold ${Math.round(8 * uiScale)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('ĐẢO T.G', btn.x, btn.y - (isOnCooldown ? 9 * uiScale : 3 * uiScale));
+
+        if (!isOnCooldown) {
+            ctx.fillStyle = nextColor;
+            ctx.font = `bold ${Math.round(7.5 * uiScale)}px sans-serif`;
+            const nextLabels = { PAST: '→ CỔ ĐẠI', PRESENT: '→ HIỆN TẠI', FUTURE: '→ TƯƠNG LAI' };
+            ctx.fillText(nextLabels[nextTl] || '→ NEXT', btn.x, btn.y + 7 * uiScale);
+        } else {
+            const ratio = Math.min(1, Math.max(0, cd / maxCd));
+            const startAngle = -Math.PI / 2;
+            const endAngle = startAngle + ratio * Math.PI * 2;
+
+            ctx.beginPath();
+            ctx.moveTo(btn.x, btn.y);
+            ctx.arc(btn.x, btn.y, r, startAngle, endAngle, false);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fill();
+
+            ctx.fillStyle = '#fde047';
+            ctx.font = `bold ${Math.round(11 * uiScale)}px sans-serif`;
+            ctx.fillText(`${cd.toFixed(1)}s`, btn.x, btn.y + 6 * uiScale);
+        }
+
+        this._drawKeyBadge(ctx, btn, r);
+        ctx.restore();
+    },
+
+    _drawKeyBadge: function (ctx, btn, r) {
+        const uiScale = this.uiScale || 1.0;
+        const badgeR = Math.max(7, 9.5 * uiScale);
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+        ctx.beginPath();
+        ctx.arc(btn.x + r * 0.68, btn.y + r * 0.68, badgeR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = `bold ${Math.round(9 * uiScale)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(btn.keyHint, btn.x + r * 0.68, btn.y + r * 0.68 + 0.5);
+    },
+
+    _drawInteractButton: function (ctx) {
+        const btn = this.buttons.interact;
+        const uiScale = this.uiScale || 1.0;
+        const player = window.Game.player || { x: 1920, y: 1920 };
+        const nearby =
+            window.Game.World && typeof window.Game.World.getNearbyInteractable === 'function'
+                ? window.Game.World.getNearbyInteractable(player.x, player.y)
+                : null;
+
+        const isActive = nearby !== null;
+        const scale = btn.pressed ? 0.91 : 1.0;
+        const r = btn.r * scale;
+        const now = performance.now() * 0.001;
+
+        ctx.save();
+        if (isActive) {
+            const pulseR = r + 5 * uiScale + Math.sin(now * 6) * 4 * uiScale;
+            ctx.beginPath();
+            ctx.arc(btn.x, btn.y, pulseR, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(250, 204, 21, 0.9)';
+            ctx.lineWidth = 3 * uiScale;
+            ctx.stroke();
+        }
+
+        ctx.beginPath();
+        ctx.arc(btn.x, btn.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = isActive ? 'rgba(234, 179, 8, 0.95)' : 'rgba(30, 41, 59, 0.62)';
+        ctx.fill();
+
+        ctx.lineWidth = 2.2 * uiScale;
+        ctx.strokeStyle = isActive ? '#fef08a' : 'rgba(148, 163, 184, 0.45)';
+        ctx.stroke();
+
+        ctx.fillStyle = isActive ? '#0f172a' : 'rgba(226, 232, 240, 0.7)';
+        ctx.font = `bold ${Math.round(8.5 * uiScale)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        let label = 'TƯƠNG TÁC';
+        if (nearby === 'SEED') label = 'NHẶT HẠT';
+        else if (nearby === 'SOIL') label = 'TRỒNG CÂY';
+        else if (typeof nearby === 'string' && nearby.indexOf('CHEST') !== -1) label = 'MỞ RƯƠNG';
+        else if (typeof nearby === 'string' && nearby.indexOf('WAYPOINT') !== -1) label = 'DỊCH CHUYỂN';
+
+        ctx.fillText(label, btn.x, btn.y - 4 * uiScale);
+        ctx.font = `bold ${Math.round(8 * uiScale)}px sans-serif`;
+        ctx.fillText(`[${btn.keyHint}]`, btn.x, btn.y + 7 * uiScale);
+        ctx.restore();
+    }
+};
