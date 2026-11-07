@@ -2,6 +2,7 @@
   "name": "Kẻ Du Hành Thời Không",
   "short_name": "Thời Không",
   "start_url": "./index.html",
+  "scope": "./",
   "display": "fullscreen",
   "orientation": "landscape",
   "background_color": "#050811",
