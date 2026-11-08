@@ -4,13 +4,14 @@
  * HỆ THỐNG ĐIỀU KHIỂN & GIAO DIỆN CẢM ỨNG / PC HUD CHUYÊN NGHIỆP (ESPORTS ARPG)
  * DỰ ÁN: KẺ DU HÀNH THỜI KHÔNG
  * ============================================================================
- * 1. Quick-Tap Auto-Aim vs Precision Drag-Aim (Ngưỡng nhạy 12px * uiScale, Dynamic Angular Lerp).
- * 2. Hold-to-Fire / Auto-Combo liên tục mượt mà cả trên Mobile (Touch) và PC (J / Space / Chuột).
- * 3. MOBA/ARPG Aim Trajectory: Nón hỗ trợ ±15°, Radar Lock-On Crosshair Sci-Fi 4 góc xoay động,
- *    quỹ đạo đạn pháo Cannon AoE 2 vòng (Sweet-spot 40% & splash 55%), cảnh báo nhiệt Laser Gun.
- * 4. PC Mouse Aim Mode: Phím 'F' hoặc Giữ Chuột Phải để xoay & bắn theo con trỏ chuột trong thế giới.
- * 5. HUD Trực quan: Tên & Icon vũ khí, Vòng báo nhiệt (Heat Ring) cho Laser Gun, Lóe sáng hồi chiêu
- *    (Ready Flash Ring), giữ nguyên 100% chế độ Chỉnh sửa HUD (HUD Customizer).
+ * TỐI ƯU HÓA MOBILE TOÀN DIỆN:
+ * 1. Đa điểm độc lập (Multi-touch Isolation): Quản lý riêng biệt joystickTouchId
+ *    (nửa màn hình trái) và skillTouchId (nửa màn hình phải), chống đơ cần gạt.
+ * 2. Tiết lưu sự kiện touchmove: Cache tọa độ thô trong sự kiện và chỉ tính toán
+ *    vector/ngắm 1 lần mỗi frame (chống sụt frame trên màn hình 120Hz/144Hz).
+ * 3. Floating Joystick: Tâm cần gạt xuất hiện linh hoạt ngay tại vị trí ngón cái chạm.
+ * 4. Smart Auto-Aim & Input Buffering (150ms): Tự động xoay người khóa quái/Boss
+ *    gần nhất khi Quick-Tap; lưu đệm kỹ năng trong 150ms khi còn CD để ra chiêu tức thì.
  */
 
 window.Game = window.Game || {};
@@ -19,7 +20,7 @@ window.Game.Controls = {
     canvas: null,
     uiScale: 1.0,
 
-    // 1. Hạ ngưỡng kéo ngắm xuống 12 để phản hồi kéo ngắm tức thì
+    // Ngưỡng kéo ngắm siêu nhạy (px)
     AIM_DRAG_THRESHOLD: 12,
 
     // Bàn phím & Chuột PC
@@ -37,12 +38,22 @@ window.Game.Controls = {
         attack: { isHolding: false, lastFireTime: 0, minInterval: 0.12 }
     },
 
+    // Input Buffering (Đệm lệnh bấm chiêu trước 150ms)
+    inputBuffer: {
+        skillIndex: null,
+        options: null,
+        expireTime: 0
+    },
+
+    // Cache tọa độ chuyển động cảm ứng để tiết lưu (Throttle cho 120Hz)
+    _pendingJoystickPos: { x: 0, y: 0, dirty: false },
+
     // Hiệu ứng Lóe sáng viền nút khi hồi chiêu xong (Ready Flash Rings)
     skillFlashStates: [
-        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // attack
-        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // skill1
-        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // skill2
-        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }  // skill3 (Rage)
+        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // attack (skill 0)
+        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // skill 1
+        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // skill 2
+        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }  // skill 3 (Rage)
     ],
 
     // Cờ chế độ Chỉnh sửa HUD (HUD Customizer)
@@ -70,12 +81,14 @@ window.Game.Controls = {
         cancel: { x: 0, y: 0, w: 90, h: 38 }
     },
 
-    // Virtual Joystick (Góc dưới trái)
+    // Floating Virtual Joystick
     joystick: {
         active: false,
         touchId: null,
         originX: 120,
         originY: 0,
+        defaultOriginX: 120,
+        defaultOriginY: 0,
         currentX: 120,
         currentY: 0,
         maxRadius: 54,
@@ -104,7 +117,8 @@ window.Game.Controls = {
             aimAngle: 0,
             targetAimAngle: 0,
             aimDistRatio: 1.0,
-            aimCanceled: false
+            aimCanceled: false,
+            pendingTouchPos: { x: 0, y: 0, dirty: false }
         },
         skill1: {
             index: 1,
@@ -120,7 +134,8 @@ window.Game.Controls = {
             aimAngle: 0,
             targetAimAngle: 0,
             aimDistRatio: 1.0,
-            aimCanceled: false
+            aimCanceled: false,
+            pendingTouchPos: { x: 0, y: 0, dirty: false }
         },
         skill2: {
             index: 2,
@@ -136,7 +151,8 @@ window.Game.Controls = {
             aimAngle: 0,
             targetAimAngle: 0,
             aimDistRatio: 1.0,
-            aimCanceled: false
+            aimCanceled: false,
+            pendingTouchPos: { x: 0, y: 0, dirty: false }
         },
         skill3: {
             index: 3,
@@ -152,7 +168,8 @@ window.Game.Controls = {
             aimAngle: 0,
             targetAimAngle: 0,
             aimDistRatio: 1.0,
-            aimCanceled: false
+            aimCanceled: false,
+            pendingTouchPos: { x: 0, y: 0, dirty: false }
         },
         switchWeapon: { x: 0, y: 0, r: 24, keyHint: 'Tab', pressed: false, touchId: null },
         timeShift: { x: 0, y: 0, r: 24, keyHint: 'Q', pressed: false, touchId: null },
@@ -272,8 +289,8 @@ window.Game.Controls = {
 
         const layoutData = {
             joystick: {
-                rx: this.joystick.originX / w,
-                ry: this.joystick.originY / h
+                rx: this.joystick.defaultOriginX / w,
+                ry: this.joystick.defaultOriginY / h
             },
             buttons: {}
         };
@@ -308,8 +325,10 @@ window.Game.Controls = {
 
             if (data.joystick && typeof data.joystick.rx === 'number') {
                 const jr = this.joystick.maxRadius + 10;
-                this.joystick.originX = Math.max(jr, Math.min(width - jr, data.joystick.rx * width));
-                this.joystick.originY = Math.max(jr, Math.min(height - jr, data.joystick.ry * height));
+                this.joystick.defaultOriginX = Math.max(jr, Math.min(width - jr, data.joystick.rx * width));
+                this.joystick.defaultOriginY = Math.max(jr, Math.min(height - jr, data.joystick.ry * height));
+                this.joystick.originX = this.joystick.defaultOriginX;
+                this.joystick.originY = this.joystick.defaultOriginY;
                 this.joystick.currentX = this.joystick.originX;
                 this.joystick.currentY = this.joystick.originY;
             }
@@ -363,8 +382,10 @@ window.Game.Controls = {
         this.buttons.interact.x = atkX + Math.cos((264 * Math.PI) / 180) * subArcR;
         this.buttons.interact.y = atkY + Math.sin((264 * Math.PI) / 180) * subArcR;
 
-        this.joystick.originX = Math.max(75 * uiScale, width * 0.14);
-        this.joystick.originY = height - Math.max(85 * uiScale, height * 0.22);
+        this.joystick.defaultOriginX = Math.max(75 * uiScale, width * 0.14);
+        this.joystick.defaultOriginY = height - Math.max(85 * uiScale, height * 0.22);
+        this.joystick.originX = this.joystick.defaultOriginX;
+        this.joystick.originY = this.joystick.defaultOriginY;
         this.joystick.currentX = this.joystick.originX;
         this.joystick.currentY = this.joystick.originY;
 
@@ -430,17 +451,30 @@ window.Game.Controls = {
             btn.touchId = null;
             btn.isAiming = false;
             btn.aimCanceled = false;
+            if (btn.pendingTouchPos) {
+                btn.pendingTouchPos.dirty = false;
+            }
         }
         this.joystick.active = false;
         this.joystick.touchId = null;
         this.joystick.dx = 0;
         this.joystick.dy = 0;
+        this.joystick.originX = this.joystick.defaultOriginX;
+        this.joystick.originY = this.joystick.defaultOriginY;
+        this.joystick.currentX = this.joystick.originX;
+        this.joystick.currentY = this.joystick.originY;
+        this._pendingJoystickPos.dirty = false;
+
         this.mouseDownButtonKey = null;
         this.rightMouseDown = false;
         this.draggingHudKey = null;
         this.dragTouchId = null;
         this.cancelZone.active = false;
         this.autoFireTracker.attack.isHolding = false;
+
+        this.inputBuffer.skillIndex = null;
+        this.inputBuffer.options = null;
+        this.inputBuffer.expireTime = 0;
     },
 
     _getCanvasCoords: function (clientX, clientY) {
@@ -493,8 +527,8 @@ window.Game.Controls = {
             this.draggingHudKey = hitElement.key;
             this.dragTouchId = pointerId;
             if (hitElement.key === 'joystick') {
-                this.dragOffset.x = x - this.joystick.originX;
-                this.dragOffset.y = y - this.joystick.originY;
+                this.dragOffset.x = x - this.joystick.defaultOriginX;
+                this.dragOffset.y = y - this.joystick.defaultOriginY;
             } else {
                 this.dragOffset.x = x - hitElement.target.x;
                 this.dragOffset.y = y - hitElement.target.y;
@@ -516,6 +550,8 @@ window.Game.Controls = {
             const pad = this.joystick.maxRadius + 8;
             const targetX = Math.max(pad, Math.min(canvasW - pad, x - this.dragOffset.x));
             const targetY = Math.max(pad, Math.min(canvasH - pad, y - this.dragOffset.y));
+            this.joystick.defaultOriginX = targetX;
+            this.joystick.defaultOriginY = targetY;
             this.joystick.originX = targetX;
             this.joystick.originY = targetY;
             this.joystick.currentX = targetX;
@@ -549,18 +585,88 @@ window.Game.Controls = {
         }
     },
 
-    _triggerSkill: function (skillIndex, aimOptions, isInitialPress) {
+    /**
+     * TÌM KIẾM QUÁI / BOSS GẦN NHẤT ĐỂ SMART AUTO-AIM
+     */
+    _findNearestAutoAimTarget: function (maxRange) {
+        const player = window.Game.player;
+        if (!player || player.hp <= 0) return null;
+        if (!window.Game.Enemies || typeof window.Game.Enemies.getActiveList !== 'function') return null;
+
+        const enemies = window.Game.Enemies.getActiveList();
+        if (!enemies || enemies.length === 0) return null;
+
+        const searchRange = maxRange || 520;
+        let bestTarget = null;
+        let minScore = Infinity;
+
+        for (let i = 0; i < enemies.length; i++) {
+            const e = enemies[i];
+            if (!e || e.hp <= 0) continue;
+
+            const edx = e.x - player.x;
+            const edy = e.y - player.y;
+            const dist = Math.hypot(edx, edy);
+
+            if (dist > searchRange) continue;
+
+            // Ưu tiên Boss (nhân hệ số giảm khoảng cách ảo để khóa Boss trước)
+            const isBoss = !!(e.isBoss || e.type === 'boss' || (e.maxHp && e.maxHp >= 500));
+            const score = isBoss ? dist * 0.65 : dist;
+
+            if (score < minScore) {
+                minScore = score;
+                bestTarget = e;
+            }
+        }
+        return bestTarget;
+    },
+
+    /**
+     * KÍCH HOẠT KỸ NĂNG VỚI SMART AUTO-AIM & INPUT BUFFERING (150ms)
+     */
+    _triggerSkill: function (skillIndex, aimOptions, isInitialPress, isBufferedExecution) {
         if (this.isControlLocked()) return;
 
-        const options = aimOptions || { manualAim: false };
+        const options = Object.assign({ manualAim: false, autoAimOnTap: false, distRatio: 1.0 }, aimOptions);
+        const combatSkills = (window.Game.Combat && typeof window.Game.Combat.getActiveSkills === 'function')
+            ? window.Game.Combat.getActiveSkills()
+            : (window.Game.Combat && window.Game.Combat.skills) || [];
+
+        const currentSkill = combatSkills[skillIndex];
+        const cd = currentSkill ? Math.max(0, currentSkill.cd || 0) : 0;
+
+        // KIỂM TRA HỒI CHIÊU & INPUT BUFFERING (150ms = 0.15s)
+        if (!isBufferedExecution && cd > 0.02) {
+            if (cd <= 0.15) {
+                this.inputBuffer.skillIndex = skillIndex;
+                this.inputBuffer.options = options;
+                this.inputBuffer.expireTime = performance.now() + 150;
+            }
+            return;
+        }
+
+        // SMART AUTO-AIM: Tự động hướng mặt về quái/Boss gần nhất khi nhấp nhanh
+        if (!options.manualAim || options.autoAimOnTap) {
+            const player = window.Game.player;
+            if (player) {
+                const target = this._findNearestAutoAimTarget(550);
+                if (target) {
+                    const autoAngle = Math.atan2(target.y - player.y, target.x - player.x);
+                    player.angle = autoAngle;
+                    this.lastAngle = autoAngle;
+                    options.aimAngle = autoAngle;
+                    options.autoAimTarget = target;
+                } else {
+                    options.aimAngle = (typeof options.aimAngle === 'number') ? options.aimAngle : (player.angle || this.lastAngle);
+                }
+            }
+        }
+
         if (isInitialPress) {
             this._vibrate(skillIndex === 3 ? 25 : 15);
             const btnMap = [this.buttons.attack, this.buttons.skill1, this.buttons.skill2, this.buttons.skill3];
-            const combatSkills = (window.Game.Combat && typeof window.Game.Combat.getActiveSkills === 'function')
-                ? window.Game.Combat.getActiveSkills()
-                : (window.Game.Combat && window.Game.Combat.skills) || [];
-
-            const color = (combatSkills[skillIndex] && combatSkills[skillIndex].color) || '#38bdf8';
+            const color = (currentSkill && currentSkill.color) || '#38bdf8';
             if (btnMap[skillIndex]) {
                 this._spawnRipple(btnMap[skillIndex], color);
             }
@@ -644,7 +750,8 @@ window.Game.Controls = {
         const hit = this._findHitRightButton(x, y);
         if (hit) return { key: hit.key, target: hit.btn };
 
-        if (Math.hypot(x - this.joystick.originX, y - this.joystick.originY) <= this.joystick.maxRadius + 15) {
+        const joyDist = Math.hypot(x - this.joystick.defaultOriginX, y - this.joystick.defaultOriginY);
+        if (joyDist <= this.joystick.maxRadius + 15) {
             return { key: 'joystick', target: this.joystick };
         }
         return null;
@@ -661,14 +768,15 @@ window.Game.Controls = {
         if (dist > 0.001) {
             const angle = Math.atan2(rawDy, rawDx);
 
+            // Floating dynamic follow: Tâm trôi theo ngón tay nếu kéo vượt quá bán kính
             if (dist > maxR) {
                 const extra = dist - maxR;
                 this.joystick.originX += Math.cos(angle) * extra;
                 this.joystick.originY += Math.sin(angle) * extra;
 
-                const maxAllowedLeftX = canvasW * 0.42 - maxR;
+                const maxAllowedLeftX = canvasW * 0.46 - maxR;
                 this.joystick.originX = Math.max(maxR + 10, Math.min(maxAllowedLeftX, this.joystick.originX));
-                this.joystick.originY = Math.max(140, Math.min(canvasH - maxR - 10, this.joystick.originY));
+                this.joystick.originY = Math.max(maxR + 10, Math.min(canvasH - maxR - 10, this.joystick.originY));
                 dist = maxR;
             }
 
@@ -694,8 +802,54 @@ window.Game.Controls = {
         }
     },
 
+    /**
+     * TIẾT LƯU: XỬ LÝ TOÀN BỘ CÁC CHẠM CẢM ỨNG 1 LẦN MỖI FRAME
+     */
+    _processPendingInputs: function () {
+        // 1. Cập nhật Vector Joystick từ vị trí chạm đã lưu
+        if (this.joystick.active && this._pendingJoystickPos.dirty) {
+            this._updateJoystickVector(this._pendingJoystickPos.x, this._pendingJoystickPos.y);
+            this._pendingJoystickPos.dirty = false;
+        }
+
+        // 2. Cập nhật Drag-Aim của các nút kỹ năng
+        const dragThreshold = (this.AIM_DRAG_THRESHOLD || 12) * (this.uiScale || 1.0);
+        for (let key in this.buttons) {
+            const btn = this.buttons[key];
+            if (btn.pendingTouchPos && btn.pendingTouchPos.dirty && typeof btn.index === 'number') {
+                const px = btn.pendingTouchPos.x;
+                const py = btn.pendingTouchPos.y;
+                const deltaX = px - btn.touchStartX;
+                const deltaY = py - btn.touchStartY;
+                const dragDist = Math.hypot(deltaX, deltaY);
+
+                const distToCancel = Math.hypot(px - this.cancelZone.x, py - this.cancelZone.y);
+                if (distToCancel <= this.cancelZone.r + 20) {
+                    btn.aimCanceled = true;
+                    this.cancelZone.active = true;
+                } else {
+                    btn.aimCanceled = false;
+                    this.cancelZone.active = false;
+                }
+
+                if (dragDist >= dragThreshold) {
+                    btn.isAiming = true;
+                    btn.targetAimAngle = Math.atan2(deltaY, deltaX);
+                    btn.aimDistRatio = Math.max(0.25, Math.min(1.0, (dragDist - dragThreshold * 0.5) / (105 * this.uiScale)));
+                    if (window.Game.player) {
+                        window.Game.player.angle = btn.aimAngle;
+                    }
+                } else {
+                    btn.isAiming = false;
+                    btn.aimCanceled = false;
+                }
+                btn.pendingTouchPos.dirty = false;
+            }
+        }
+    },
+
     // ==========================================
-    // SỰ KIỆN CẢM ỨNG (MOBILE TOUCH)
+    // SỰ KIỆN CẢM ỨNG ĐA ĐIỂM (ISOLATED MULTI-TOUCH)
     // ==========================================
     _bindTouchEvents: function (canvas) {
         canvas.addEventListener(
@@ -725,10 +879,16 @@ window.Game.Controls = {
                     }
                     if (pos.x <= 130 && pos.y <= 130) continue;
 
+                    // KIỂM TRA NỬA PHẢI HOẶC VÙNG NÚT: Nút kỹ năng / Thao tác
                     const hit = this._findHitRightButton(pos.x, pos.y);
                     if (hit) {
                         hit.btn.pressed = true;
                         hit.btn.touchId = t.identifier;
+                        if (hit.btn.pendingTouchPos) {
+                            hit.btn.pendingTouchPos.x = pos.x;
+                            hit.btn.pendingTouchPos.y = pos.y;
+                            hit.btn.pendingTouchPos.dirty = false;
+                        }
 
                         if (hit.key === 'interact') {
                             this._triggerInteract();
@@ -737,7 +897,6 @@ window.Game.Controls = {
                         } else if (hit.key === 'timeShift') {
                             this._cycleNextTimeline();
                         } else {
-                            // Lưu gốc kéo & khởi tạo góc ngắm
                             hit.btn.touchStartX = pos.x;
                             hit.btn.touchStartY = pos.y;
                             hit.btn.isAiming = false;
@@ -749,7 +908,7 @@ window.Game.Controls = {
 
                             if (hit.key === 'attack') {
                                 this.autoFireTracker.attack.isHolding = true;
-                                this.autoFireTracker.attack.lastFireTime = 0; // Kích hoạt ngay đòn đầu
+                                this.autoFireTracker.attack.lastFireTime = 0;
                             }
                         }
                         continue;
@@ -761,16 +920,24 @@ window.Game.Controls = {
                         pos.y >= canvasH - 95 * (this.uiScale || 1.0);
                     if (isBottomCenterHud) continue;
 
-                    if (pos.x < canvasW * 0.5 && !this.joystick.active) {
-                        const clampOriginX = Math.min(pos.x, canvasW * 0.38 - this.joystick.maxRadius - 8);
+                    // FLOATING JOYSTICK: Chạm vào nửa màn hình trái (x < canvasW * 0.5)
+                    if (pos.x < canvasW * 0.5 && this.joystick.touchId === null) {
+                        const maxR = this.joystick.maxRadius;
+                        const clampOriginX = Math.max(maxR + 10, Math.min(canvasW * 0.44, pos.x));
+                        const clampOriginY = Math.max(maxR + 10, Math.min(canvasH - maxR - 10, pos.y));
+
                         this.joystick.active = true;
                         this.joystick.touchId = t.identifier;
-                        this.joystick.originX = Math.max(this.joystick.maxRadius + 12, clampOriginX);
-                        this.joystick.originY = Math.max(135, Math.min(canvasH - this.joystick.maxRadius - 12, pos.y));
-                        this.joystick.currentX = this.joystick.originX;
-                        this.joystick.currentY = this.joystick.originY;
+                        this.joystick.originX = clampOriginX;
+                        this.joystick.originY = clampOriginY;
+                        this.joystick.currentX = clampOriginX;
+                        this.joystick.currentY = clampOriginY;
                         this.joystick.dx = 0;
                         this.joystick.dy = 0;
+
+                        this._pendingJoystickPos.x = clampOriginX;
+                        this._pendingJoystickPos.y = clampOriginY;
+                        this._pendingJoystickPos.dirty = false;
                     }
                 }
             },
@@ -786,9 +953,6 @@ window.Game.Controls = {
                 }
                 e.preventDefault();
 
-                // Ngưỡng kéo ngắm siêu nhạy 12 * uiScale
-                const dragThreshold = (this.AIM_DRAG_THRESHOLD || 12) * (this.uiScale || 1.0);
-
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const t = e.changedTouches[i];
                     const pos = this._getCanvasCoords(t.clientX, t.clientY);
@@ -798,41 +962,22 @@ window.Game.Controls = {
                         continue;
                     }
 
+                    // 1. Tiết lưu Joystick: Chỉ lưu tọa độ chạm thô
                     if (this.joystick.active && t.identifier === this.joystick.touchId) {
-                        this._updateJoystickVector(pos.x, pos.y);
+                        this._pendingJoystickPos.x = pos.x;
+                        this._pendingJoystickPos.y = pos.y;
+                        this._pendingJoystickPos.dirty = true;
                         continue;
                     }
 
+                    // 2. Tiết lưu Kéo ngắm kỹ năng: Chỉ lưu tọa độ chạm thô
                     for (let key in this.buttons) {
                         const btn = this.buttons[key];
                         if (btn.touchId === t.identifier && typeof btn.index === 'number') {
-                            const deltaX = pos.x - btn.touchStartX;
-                            const deltaY = pos.y - btn.touchStartY;
-                            const dragDist = Math.hypot(deltaX, deltaY);
-
-                            const distToCancel = Math.hypot(pos.x - this.cancelZone.x, pos.y - this.cancelZone.y);
-                            if (distToCancel <= this.cancelZone.r + 20) {
-                                btn.aimCanceled = true;
-                                this.cancelZone.active = true;
-                            } else {
-                                btn.aimCanceled = false;
-                                this.cancelZone.active = false;
-                            }
-
-                            // Kéo vượt ngưỡng 12px: Kích hoạt Drag-Aim với Angular Lerp
-                            if (dragDist >= dragThreshold) {
-                                btn.isAiming = true;
-                                btn.targetAimAngle = Math.atan2(deltaY, deltaX);
-                                btn.aimDistRatio = Math.max(0.25, Math.min(1.0, (dragDist - dragThreshold * 0.5) / (105 * this.uiScale)));
-
-                                if (window.Game.player) {
-                                    window.Game.player.angle = btn.aimAngle;
-                                }
-                            } else {
-                                // Trong phạm vi 12px: Quick-Tap (Auto-Aim)
-                                btn.isAiming = false;
-                                btn.aimCanceled = false;
-                            }
+                            if (!btn.pendingTouchPos) btn.pendingTouchPos = { x: 0, y: 0, dirty: false };
+                            btn.pendingTouchPos.x = pos.x;
+                            btn.pendingTouchPos.y = pos.y;
+                            btn.pendingTouchPos.dirty = true;
                         }
                     }
                 }
@@ -850,13 +995,19 @@ window.Game.Controls = {
                     continue;
                 }
 
+                // 1. Thả ngón tay Joystick ở nửa trái: Độc lập hoàn toàn, không ảnh hưởng kỹ năng
                 if (this.joystick.active && t.identifier === this.joystick.touchId) {
                     this.joystick.active = false;
                     this.joystick.touchId = null;
                     this.joystick.dx = 0;
                     this.joystick.dy = 0;
+                    this.joystick.currentX = this.joystick.originX;
+                    this.joystick.currentY = this.joystick.originY;
+                    this._pendingJoystickPos.dirty = false;
+                    continue;
                 }
 
+                // 2. Thả ngón tay Kỹ năng ở nửa phải: Độc lập hoàn toàn, không ảnh hưởng joystick
                 for (let key in this.buttons) {
                     const btn = this.buttons[key];
                     if (btn.touchId === t.identifier) {
@@ -867,14 +1018,13 @@ window.Game.Controls = {
                         if (typeof btn.index === 'number') {
                             if (!btn.aimCanceled) {
                                 if (btn.isAiming) {
-                                    // Thả tay sau khi kéo -> Kích hoạt theo hướng ngắm chính xác
                                     this._triggerSkill(btn.index, {
                                         manualAim: true,
                                         aimAngle: btn.aimAngle,
                                         distRatio: btn.aimDistRatio
                                     }, true);
                                 } else {
-                                    // Thả tay trong phạm vi 12px -> Quick-Tap Auto-Aim
+                                    // Quick-Tap: Smart Auto-Aim quái gần nhất
                                     this._triggerSkill(btn.index, {
                                         manualAim: false,
                                         autoAimOnTap: true,
@@ -890,10 +1040,23 @@ window.Game.Controls = {
                         btn.touchId = null;
                         btn.isAiming = false;
                         btn.aimCanceled = false;
+                        if (btn.pendingTouchPos) {
+                            btn.pendingTouchPos.dirty = false;
+                        }
                     }
                 }
             }
-            this.cancelZone.active = false;
+
+            let anyAiming = false;
+            for (let key in this.buttons) {
+                if (this.buttons[key].isAiming) {
+                    anyAiming = true;
+                    break;
+                }
+            }
+            if (!anyAiming) {
+                this.cancelZone.active = false;
+            }
         };
 
         canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
@@ -904,7 +1067,6 @@ window.Game.Controls = {
     // SỰ KIỆN CHUỘT (PC MOUSE AIM & CONTROLS)
     // ==========================================
     _bindMouseEvents: function (canvas) {
-        // Chặn contextmenu để chuột phải hoàn toàn dùng ngắm bắn ARPG
         canvas.addEventListener('contextmenu', (e) => {
             e.preventDefault();
         });
@@ -917,7 +1079,6 @@ window.Game.Controls = {
             const pos = this._getCanvasCoords(e.clientX, e.clientY);
             this._updateMouseWorldPos(pos.x, pos.y);
 
-            // Nhấn Chuột Phải (button 2): Giữ để ngắm bắn tức thời
             if (e.button === 2) {
                 e.preventDefault();
                 this.rightMouseDown = true;
@@ -929,7 +1090,6 @@ window.Game.Controls = {
                 return;
             }
 
-            // Nhấn Chuột Trái (button 0)
             if (e.button === 0) {
                 if (this.isEditMode) {
                     this._handleEditPointerDown(pos.x, pos.y, 'MOUSE');
@@ -941,7 +1101,6 @@ window.Game.Controls = {
                     return;
                 }
 
-                // Nếu đang bật Chế độ Ngắm Chuột PC hoặc đang Giữ Chuột Phải -> Click Trái là Bắn theo con trỏ chuột
                 if (this.mouseAimActive || this.rightMouseDown) {
                     this.buttons.attack.pressed = true;
                     this.autoFireTracker.attack.isHolding = true;
@@ -982,7 +1141,6 @@ window.Game.Controls = {
             const pos = this._getCanvasCoords(e.clientX, e.clientY);
             this._updateMouseWorldPos(pos.x, pos.y);
 
-            // Khi xoay chuột trong chế độ Mouse Aim hoặc Giữ Chuột Phải: Xoay mặt nhân vật ngay lập tức
             if (this.mouseAimActive || this.rightMouseDown) {
                 const player = window.Game.player;
                 if (player && player.hp > 0) {
@@ -1086,7 +1244,6 @@ window.Game.Controls = {
             const code = e.code;
             const key = e.key ? e.key.toLowerCase() : '';
 
-            // Bật/tắt chế độ Ngắm Chuột PC bằng phím 'F'
             if (key === 'f' || code === 'KeyF') {
                 e.preventDefault();
                 this.toggleMouseAim();
@@ -1132,7 +1289,6 @@ window.Game.Controls = {
 
             if (e.repeat) return;
 
-            // Nhấn giữ phím đánh (J hoặc Space) -> Kích hoạt Hold-to-Fire
             if (key === 'j' || code === 'KeyJ' || code === 'Space') {
                 this.buttons.attack.pressed = true;
                 this.autoFireTracker.attack.isHolding = true;
@@ -1192,17 +1348,21 @@ window.Game.Controls = {
     // CẬP NHẬT TRẠNG THÁI & HỒI CHIÊU (TICK LOGIC)
     // ==========================================
     _tickCooldowns: function () {
-        const now = performance.now() * 0.001;
-        if (!this._lastCdTickTime) this._lastCdTickTime = now;
-        const dt = Math.min(0.1, Math.max(0, now - this._lastCdTickTime));
-        this._lastCdTickTime = now;
+        const nowSec = performance.now() * 0.001;
+        const nowMs = performance.now();
+        if (!this._lastCdTickTime) this._lastCdTickTime = nowSec;
+        const dt = Math.min(0.1, Math.max(0, nowSec - this._lastCdTickTime));
+        this._lastCdTickTime = nowSec;
+
+        // 1. Tiết lưu: Xử lý Joystick & Vuốt ngắm thô gom về 1 lần/frame
+        this._processPendingInputs();
 
         const state = window.Game.state;
         if (state && typeof state.timeShiftCooldown === 'number' && state.timeShiftCooldown > 0) {
             state.timeShiftCooldown = Math.max(0, state.timeShiftCooldown - dt);
         }
 
-        // 1. Dynamic Angular Lerp cho các nút đang kéo ngắm
+        // 2. Dynamic Angular Lerp cho các nút đang kéo ngắm
         const lerpFactor = 1.0 - Math.exp(-dt * 26);
         for (let k in this.buttons) {
             const btn = this.buttons[k];
@@ -1211,7 +1371,7 @@ window.Game.Controls = {
             }
         }
 
-        // 2. Theo dõi CD và kích hoạt Hiệu ứng Lóe Sáng (Ready Flash Ring) khi chiêu vừa hồi xong
+        // 3. Theo dõi CD và kích hoạt Hiệu ứng Lóe Sáng (Ready Flash Ring)
         const combatSkills = (window.Game.Combat && typeof window.Game.Combat.getActiveSkills === 'function')
             ? window.Game.Combat.getActiveSkills()
             : (window.Game.Combat && window.Game.Combat.skills) || [];
@@ -1222,7 +1382,6 @@ window.Game.Controls = {
             const flashState = this.skillFlashStates[i];
 
             if (flashState.prevCd > 0.05 && currentCd <= 0.01) {
-                // Vừa chuyển từ có CD sang hồi xong -> Kích hoạt flash
                 flashState.flashAlpha = 1.0;
                 flashState.flashTimer = 0.45;
                 if (i > 0) this._vibrate(8);
@@ -1234,25 +1393,41 @@ window.Game.Controls = {
             }
         }
 
-        // 3. Cơ Chế Giữ Nút Liên Thanh (Hold-to-Fire / Auto-Combo)
+        // 4. XỬ LÝ INPUT BUFFERING: Tự kích hoạt khi kỹ năng hồi xong trong 150ms
+        if (this.inputBuffer.skillIndex !== null) {
+            if (nowMs > this.inputBuffer.expireTime) {
+                this.inputBuffer.skillIndex = null;
+                this.inputBuffer.options = null;
+            } else {
+                const bufferedIdx = this.inputBuffer.skillIndex;
+                const bSkill = combatSkills[bufferedIdx];
+                const bCd = bSkill ? Math.max(0, bSkill.cd || 0) : 0;
+                if (bCd <= 0.02) {
+                    const bOptions = this.inputBuffer.options;
+                    this.inputBuffer.skillIndex = null;
+                    this.inputBuffer.options = null;
+                    this._triggerSkill(bufferedIdx, bOptions, true, true);
+                }
+            }
+        }
+
+        // 5. Cơ Chế Giữ Nút Đánh Liên Thanh (Hold-to-Fire / Auto-Combo)
         if (this.autoFireTracker.attack.isHolding && !this.isControlLocked()) {
             const atkSkill = combatSkills[0];
             const isAtkReady = !atkSkill || (atkSkill.cd <= 0.03);
-            const timeSinceLast = now - this.autoFireTracker.attack.lastFireTime;
+            const timeSinceLast = nowSec - this.autoFireTracker.attack.lastFireTime;
 
             if (isAtkReady && timeSinceLast >= this.autoFireTracker.attack.minInterval) {
-                this.autoFireTracker.attack.lastFireTime = now;
+                this.autoFireTracker.attack.lastFireTime = nowSec;
                 const atkBtn = this.buttons.attack;
 
                 if (atkBtn.isAiming) {
-                    // Kéo vượt ngưỡng: Bắn liên tục theo tia ngắm động
                     this._triggerSkill(0, {
                         manualAim: true,
                         aimAngle: atkBtn.aimAngle,
                         distRatio: atkBtn.aimDistRatio
                     }, false);
                 } else if (this.mouseAimActive || this.rightMouseDown) {
-                    // Chế độ Chuột PC: Bắn theo vị trí con trỏ chuột trong thế giới
                     const player = window.Game.player;
                     const aimAngle = player ? Math.atan2(this.mouseWorldPos.y - player.y, this.mouseWorldPos.x - player.x) : this.lastAngle;
                     this._triggerSkill(0, {
@@ -1261,7 +1436,6 @@ window.Game.Controls = {
                         distRatio: 1.0
                     }, false);
                 } else {
-                    // Nhấn giữ tại tâm: Auto-Combo hướng mặt + Smart Auto-Aim ±15°
                     this._triggerSkill(0, {
                         manualAim: false,
                         autoAimOnTap: true,
@@ -1271,7 +1445,7 @@ window.Game.Controls = {
             }
         }
 
-        // 4. Update các gợn sóng xúc giác HUD (Ripples)
+        // 6. Cập nhật các gợn sóng xúc giác HUD (Ripples)
         for (let i = this.ripples.length - 1; i >= 0; i--) {
             const rp = this.ripples[i];
             rp.r += (rp.maxR - rp.r) * Math.min(1, dt * 14);
@@ -1316,7 +1490,6 @@ window.Game.Controls = {
 
         const isMoving = Math.hypot(dx, dy) > 0.01;
 
-        // Nếu đang trong chế độ Ngắm Chuột PC hoặc Giữ Chuột Phải -> Hướng mặt luôn hướng về con trỏ chuột
         let angle = isMoving ? Math.atan2(dy, dx) : this.lastAngle;
         if (this.mouseAimActive || this.rightMouseDown) {
             const player = window.Game.player;
@@ -1366,7 +1539,6 @@ window.Game.Controls = {
         const distRatio = activeAimButton ? (activeAimButton.aimDistRatio || 1.0) : 1.0;
         const isCanceled = activeAimButton ? activeAimButton.aimCanceled : false;
 
-        // Kiểm tra nhiệt độ súng Laser để cảnh báo nhấp nháy
         const weaponHeat = (window.Game.Combat && window.Game.Combat.weaponHeat) || 0;
         const isOverheating = (aimConfig.type === 'LASER' && weaponHeat >= 60);
         const now = performance.now() * 0.001;
@@ -1390,7 +1562,7 @@ window.Game.Controls = {
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
 
-        // 1. Vẽ Khung Nón Hỗ Trợ Ngắm Nhỏ (±15° = ±0.2618 rad) mờ tinh tế quanh trục ngắm
+        // 1. Khung Nón Hỗ Trợ Ngắm Nhỏ (±15°)
         if (aimConfig.type === 'LASER' || aimConfig.type === 'CANNON_AOE' || aimConfig.type === 'LINE') {
             const coneHalfAngle = 15 * (Math.PI / 180);
             ctx.beginPath();
@@ -1420,9 +1592,8 @@ window.Game.Controls = {
 
         // 3. Đường quỹ đạo ngắm chính
         if (aimConfig.type === 'CANNON_AOE') {
-            // Quỹ đạo đạn pháo: Đường cong chấm bi Parabol từ nhân vật đến điểm nổ
             const midX = (px + targetX) * 0.5;
-            const midY = (py + targetY) * 0.5 - 45 * zoom; // Vòm cung đạn pháo
+            const midY = (py + targetY) * 0.5 - 45 * zoom;
 
             ctx.setLineDash([8, 6]);
             ctx.lineDashOffset = -(now * 30) % 14;
@@ -1437,11 +1608,9 @@ window.Game.Controls = {
             ctx.stroke();
             ctx.setLineDash([]);
 
-            // Tâm nổ 2 VÒNG: Vòng ngoài 55% lan, Vòng trong 40% bán kính (Tâm Nổ 100% sát thương)
             const aoeR = (aimConfig.aoeRadius || 100) * zoom;
             const sweetSpotR = aoeR * 0.40;
 
-            // Vòng ngoài lan 55%
             ctx.beginPath();
             ctx.arc(targetX, targetY, aoeR, 0, Math.PI * 2);
             ctx.fillStyle = isCanceled ? 'rgba(239, 68, 68, 0.12)' : 'rgba(0, 242, 254, 0.12)';
@@ -1450,7 +1619,6 @@ window.Game.Controls = {
             ctx.strokeStyle = isCanceled ? '#ef4444' : 'rgba(0, 242, 254, 0.7)';
             ctx.stroke();
 
-            // Vòng trong Tâm Nổ 100% sát thương (Sweet Spot)
             ctx.beginPath();
             ctx.arc(targetX, targetY, sweetSpotR, 0, Math.PI * 2);
             ctx.fillStyle = isCanceled ? 'rgba(220, 38, 38, 0.35)' : 'rgba(249, 115, 22, 0.35)';
@@ -1461,7 +1629,6 @@ window.Game.Controls = {
             ctx.shadowBlur = 12;
             ctx.stroke();
 
-            // Điểm crosshair tâm nổ
             ctx.beginPath();
             ctx.arc(targetX, targetY, 4 * this.uiScale, 0, Math.PI * 2);
             ctx.fillStyle = '#ffffff';
@@ -1488,7 +1655,6 @@ window.Game.Controls = {
             ctx.strokeStyle = mainColor;
             ctx.stroke();
 
-            // Tia sáng lõi giữa
             const dashOffset = -(now * 50) % 20;
             ctx.setLineDash([12, 8]);
             ctx.lineDashOffset = dashOffset;
@@ -1503,7 +1669,6 @@ window.Game.Controls = {
             ctx.stroke();
             ctx.setLineDash([]);
 
-            // Cảnh báo súng quá nhiệt bằng chữ nổi trên tia ngắm
             if (isOverheating) {
                 ctx.save();
                 ctx.font = `bold ${Math.round(11 * this.uiScale)}px sans-serif`;
@@ -1516,7 +1681,6 @@ window.Game.Controls = {
                 ctx.restore();
             }
         } else {
-            // Mặc định hoặc Tia Thẳng Chuẩn
             const dashOffset = -(now * 40) % 18;
             ctx.setLineDash([10, 8]);
             ctx.lineDashOffset = dashOffset;
@@ -1543,15 +1707,12 @@ window.Game.Controls = {
             }
         }
 
-        // 4. RADAR KHÓA MỤC TIÊU (LOCK-ON RETICLE): Quét quái trong phạm vi nón ±15°
+        // 4. RADAR KHÓA MỤC TIÊU TRONG NÓN ±15°
         this._drawLockOnReticle(ctx, px, py, angle, maxRangeWorld, camX, camY, zoom, now);
 
         ctx.restore();
     },
 
-    /**
-     * VẼ TÂM NGẮM SCI-FI 4 GÓC XOAY ĐỘNG (LOCK-ON CROSSHAIR) TRÊN QUÁI ƯU TIÊN
-     */
     _drawLockOnReticle: function (ctx, playerScreenX, playerScreenY, aimAngle, maxRangeWorld, camX, camY, zoom, now) {
         if (!window.Game.Enemies || typeof window.Game.Enemies.getActiveList !== 'function') return;
 
@@ -1580,7 +1741,6 @@ window.Game.Controls = {
             if (diff > Math.PI) diff = Math.PI * 2 - diff;
 
             if (diff <= coneHalfRad) {
-                // Điểm ưu tiên: kết hợp giữa cự ly và độ lệch góc
                 const score = dist * 0.6 + diff * 320;
                 if (score < minScore) {
                     minScore = score;
@@ -1599,7 +1759,6 @@ window.Game.Controls = {
         ctx.save();
         ctx.translate(ex, ey);
 
-        // Vòng tròn chấm Sci-Fi
         ctx.beginPath();
         ctx.arc(0, 0, r, 0, Math.PI * 2);
         ctx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
@@ -1608,7 +1767,6 @@ window.Game.Controls = {
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // 4 Góc ngắm Sci-Fi xoay động
         ctx.rotate(rot);
         ctx.strokeStyle = '#ef4444';
         ctx.lineWidth = 2.5 * this.uiScale;
@@ -1627,7 +1785,6 @@ window.Game.Controls = {
             ctx.restore();
         }
 
-        // Chấm đỏ tâm và chữ LOCKED
         ctx.rotate(-rot);
         ctx.beginPath();
         ctx.arc(0, 0, 3 * this.uiScale, 0, Math.PI * 2);
@@ -1673,9 +1830,7 @@ window.Game.Controls = {
             ? window.Game.Combat.getActiveSkills()
             : (window.Game.Combat && window.Game.Combat.skills) || defaultSkills;
 
-        // Nút Đánh (Attack Button với Heat Gauge & Tên Vũ Khí)
         this._drawAttackButton(ctx, this.buttons.attack, combatSkills[0] || defaultSkills[0]);
-        // Các nút Kỹ năng (có Flash Ring khi hồi xong)
         this._drawSkillButton(ctx, this.buttons.skill1, combatSkills[1] || defaultSkills[1], 1);
         this._drawSkillButton(ctx, this.buttons.skill2, combatSkills[2] || defaultSkills[2], 2);
         this._drawRageSkillButton(ctx, this.buttons.skill3, combatSkills[3] || defaultSkills[3]);
@@ -1684,7 +1839,6 @@ window.Game.Controls = {
         this._drawTimeShiftButton(ctx);
         this._drawInteractButton(ctx);
 
-        // Hiển thị trạng thái Chế độ Ngắm Chuột PC ở góc trên
         if (this.mouseAimActive) {
             this._drawMouseAimIndicator(ctx, w);
         }
@@ -1845,7 +1999,7 @@ window.Game.Controls = {
         ctx.lineWidth = isJoyDragging ? 3 : 2;
         ctx.setLineDash([5, 4]);
         ctx.beginPath();
-        ctx.arc(this.joystick.originX, this.joystick.originY, this.joystick.maxRadius + 7, 0, Math.PI * 2);
+        ctx.arc(this.joystick.defaultOriginX, this.joystick.defaultOriginY, this.joystick.maxRadius + 7, 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
 
@@ -1925,12 +2079,6 @@ window.Game.Controls = {
         ctx.restore();
     },
 
-    /**
-     * VẼ NÚT ĐÁNH CHÍNH (ATTACK BUTTON):
-     * - Tên/Biểu tượng vũ khí hiện tại (Kiếm Cyber, Laser Gun, Chrono Cannon)
-     * - Thanh vòng nhiệt (Heat Gauge Ring) quanh viền nút khi cầm Laser Gun
-     * - Ready Flash Ring khi hồi xong
-     */
     _drawAttackButton: function (ctx, btn, skillData) {
         const uiScale = this.uiScale || 1.0;
         const scale = btn.pressed ? 0.91 : 1.0;
@@ -1956,7 +2104,6 @@ window.Game.Controls = {
 
         ctx.save();
 
-        // 1. Hiệu ứng Flash Ring khi vừa hồi chiêu xong
         const flash = this.skillFlashStates[0];
         if (flash.flashAlpha > 0.01) {
             ctx.save();
@@ -1970,7 +2117,6 @@ window.Game.Controls = {
             ctx.restore();
         }
 
-        // 2. Viền phát sáng khi bấm giữ
         if (btn.pressed && !isOnCooldown) {
             ctx.beginPath();
             ctx.arc(btn.x, btn.y, r + 6 * uiScale, 0, Math.PI * 2);
@@ -1980,7 +2126,6 @@ window.Game.Controls = {
             ctx.globalAlpha = 1.0;
         }
 
-        // Nền nút
         ctx.beginPath();
         ctx.arc(btn.x, btn.y, r, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
@@ -1999,7 +2144,6 @@ window.Game.Controls = {
         ctx.strokeStyle = isOnCooldown ? 'rgba(148, 163, 184, 0.5)' : (btn.pressed ? '#fde047' : '#ffffff');
         ctx.stroke();
 
-        // 3. Thanh Vòng Nhiệt (Heat Gauge Ring) quanh viền nút nếu đang cầm Laser Gun
         if (currentWeapon === 'laser_gun') {
             const heat = Math.max(0, Math.min(100, (window.Game.Combat && window.Game.Combat.weaponHeat) || 0));
             if (heat > 0) {
@@ -2023,14 +2167,12 @@ window.Game.Controls = {
             }
         }
 
-        // Chữ Tên Vũ Khí & Icon
         ctx.fillStyle = '#ffffff';
         ctx.font = `bold ${Math.round(11 * uiScale)}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(`${weaponIcon} ${weaponLabel}`, btn.x, btn.y - (isOnCooldown ? 9 * uiScale : 1 * uiScale));
 
-        // Cooldown Overlay nếu đang hồi chiêu
         if (isOnCooldown) {
             const ratio = Math.min(1, Math.max(0, cd / maxCd));
             const startAngle = -Math.PI / 2;
@@ -2065,7 +2207,6 @@ window.Game.Controls = {
 
         ctx.save();
 
-        // 1. Hiệu ứng Flash Ring khi vừa hồi chiêu xong
         if (typeof skillIndex === 'number' && this.skillFlashStates[skillIndex]) {
             const flash = this.skillFlashStates[skillIndex];
             if (flash.flashAlpha > 0.01) {
