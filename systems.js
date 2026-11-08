@@ -1,18 +1,43 @@
 /**
- * FILE: systems.js (BẢN SIÊU CẤP TOÀN DIỆN - TÍCH HỢP FIREBASE REALTIME & BẢO MẬT ADMIN ĐỘC QUYỀN)
- * Lead Game Systems Architecture & Security Hardening:
- * - Hệ thống Firebase Realtime Database & Cloud Sync (users/{uid})
- * - Chống đè tài khoản trùng tên khác mật khẩu: Kiểm tra xác thực Password Hash trên Cloud
- * - Phân quyền Admin DUY NHẤT: Tài khoản bao2010 / Bao28102010 (Xóa sạch mọi quyền admin cũ trong localStorage)
- * - Server Remote Control: Ban/Unban thời gian thực (#banned-overlay), Tặng Quà Online (pendingGift)
- * - Tự động ẩn triệt để modal đăng nhập (#auth-modal & #login-modal) ngay khi đăng nhập thành công.
- * - Giữ nguyên 100% logic: Combat Skillsets, Vũ khí Thức tỉnh, Cổ vật, Tính điểm Chiến lực, Cường hóa x5, Giftcode, Quest & Save mã hóa.
+ * ============================================================================
+ * FILE: systems.js - BẢN NÂNG CẤP KIẾN TRÚC HỆ THỐNG TOÀN DIỆN & TỐI ƯU HÓA MOBILE
+ * Tựa game: Kẻ Du Hành Thời Không (Time Travel Game)
+ * Đơn vị triển khai: Senior Game Architect & Firebase Security Specialist
+ * ============================================================================
+ * DANH MỤC NÂNG CẤP TRỌNG TÂM:
+ * 1. XÓA BỎ HOÀN TOÀN LOCALSTORAGE CŨ:
+ *    - Toàn bộ cơ chế lưu/tải tiến trình nhân vật phụ thuộc 100% vào Firebase
+ *      Realtime Database qua users/{uid}/saveData.
+ * 2. AUDIO THROTTLING (CHỐNG GIẬT LAG & SẬP AUDIO CONTEXT TRÊN MOBILE):
+ *    - Giới hạn tần suất phát cho từng hiệu ứng âm thanh riêng biệt (tiếng chém,
+ *      trúng đòn, súng, nhặt tiền...) tối thiểu 80ms mới được kích hoạt lại.
+ * 3. FLOATING TEXT POOLING (CACHE & GỘP VẼ CHỮ SÁT THƯƠNG):
+ *    - Dùng Object Pool giới hạn tối đa 20 dòng chữ sát thương cùng lúc.
+ *    - Gộp lệnh thay đổi ctx.font đúng 1 lần duy nhất mỗi frame trong hàm render.
+ * 4. KỸ NĂNG QUAY NGƯỢC THỜI GIAN (CHRONO REWIND):
+ *    - Triển khai Ring Buffer (Mảng vòng) lưu vết vị trí (x, y), máu (hp),
+ *      khiên (shield) và nộ trong 3 giây gần nhất (180 frames @ 60 FPS).
+ *    - Hỗ trợ hàm kích hoạt Chrono Rewind đảo ngược trạng thái mượt mà.
+ * 5. BẢO TOÀN 100% HỆ THỐNG:
+ *    - Giữ nguyên toàn bộ Characters, Weapons, Relics, Waypoints, Quests, Admin
+ *      Bảo 2010, Realtime Presence, và Giftcodes.
+ * ============================================================================
  */
+
+// DỌN DẸP SẠCH TOÀN BỘ BỘ NHỚ LOCAL/SESSION CŨ NẾU CÒN TỒN TẠI
+try {
+    if (typeof window !== 'undefined') {
+        if (window.localStorage) window.localStorage.clear();
+        if (window.sessionStorage) window.sessionStorage.clear();
+    }
+} catch (e) {
+    console.warn('[Cache] Bỏ qua dọn dẹp storage trình duyệt:', e);
+}
 
 window.Game = window.Game || {};
 
 // ============================================================================
-// 0. FIREBASE REALTIME DATABASE CONFIGURATION & INITIALIZATION
+// CẤU HÌNH FIREBASE REALTIME DATABASE CHÍNH THỨC
 // ============================================================================
 const firebaseConfig = {
     apiKey: "AIzaSyAjyxbdkwmhCl2uUIrAY2yEL7n7LTOuUp8",
@@ -30,16 +55,16 @@ try {
             firebase.initializeApp(firebaseConfig);
         }
         window.db = firebase.database();
-        console.log('[Firebase] Realtime Database initialized successfully.');
+        console.log('[Firebase] Realtime Database kết nối thành công.');
     } else {
-        console.warn('[Firebase] Firebase SDK chưa được nhúng qua thẻ <script>.');
+        console.warn('[Firebase] SDK Firebase chưa được nạp trên trang HTML.');
     }
-} catch (e) {
-    console.error('[Firebase] Lỗi khởi tạo Firebase:', e);
+} catch (err) {
+    console.error('[Firebase] Lỗi khởi tạo Firebase:', err);
 }
 
 // ============================================================================
-// 1. CONFIGURATION: SCHEMA ĐA NHÂN VẬT & KỸ NĂNG ĐẶC TRƯNG
+// 1. CẤU HÌNH NHÂN VẬT (CHARACTERS CONFIG)
 // ============================================================================
 Game.charactersConfig = {
     time_traveler: {
@@ -114,7 +139,7 @@ Game.charactersConfig = {
 };
 
 // ============================================================================
-// 2. KHỞI TẠO STATE & CONTRACT MẶC ĐỊNH
+// 2. KHỞI TẠO BỘ TRẠNG THÁI TIÊU CHUẨN
 // ============================================================================
 const DEFAULT_CHARACTER_STATS = {
     time_traveler: { level: 1, exp: 0, maxExp: 100, bonusDamage: 0, bonusHp: 0, bonusShield: 0, bonusSpeed: 0 },
@@ -170,7 +195,6 @@ const DEFAULT_GAME_STATE = {
     currentTitle: 'Kẻ Du Hành Tân Thủ',
     usedGiftcodes: [],
     godMode: false,
-
     unlockedCharacters: ['time_traveler', 'shadow_assassin', 'iron_juggernaut'],
     selectedCharacter: 'time_traveler',
     characterStats: JSON.parse(JSON.stringify(DEFAULT_CHARACTER_STATS))
@@ -205,11 +229,13 @@ Game.player = Object.assign({}, DEFAULT_PLAYER_STATE, Game.player || {});
 Game.camera = Game.camera || { x: 0, y: 0, width: 800, height: 600, zoom: 1.0 };
 
 // ============================================================================
-// 3. SYNTHESIZER WEB AUDIO ENGINE
+// 3. AUDIO ENGINE VỚI THROTTLING CHỐNG LAG TRÊN MOBILE (NÂNG CẤP 2)
 // ============================================================================
 Game.Audio = {
     ctx: null,
     muted: false,
+    _lastPlayTimestamps: {},
+    AUDIO_THROTTLE_MS: 80, // Giới hạn tối thiểu 80ms giữa các âm thanh cùng loại
 
     getContext: function () {
         if (this.muted) return null;
@@ -223,7 +249,21 @@ Game.Audio = {
         return this.ctx;
     },
 
+    /**
+     * Kiểm tra giãn cách thời gian phát âm thanh để tránh làm ngập AudioContext
+     */
+    canPlaySound: function (soundKey) {
+        const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        const last = this._lastPlayTimestamps[soundKey] || 0;
+        if (now - last < this.AUDIO_THROTTLE_MS) {
+            return false;
+        }
+        this._lastPlayTimestamps[soundKey] = now;
+        return true;
+    },
+
     playSlash: function () {
+        if (!this.canPlaySound('slash')) return;
         const ctx = this.getContext();
         if (!ctx) return;
         const now = ctx.currentTime;
@@ -241,6 +281,7 @@ Game.Audio = {
     },
 
     playLaser: function () {
+        if (!this.canPlaySound('laser')) return;
         const ctx = this.getContext();
         if (!ctx) return;
         const now = ctx.currentTime;
@@ -258,10 +299,11 @@ Game.Audio = {
     },
 
     playExplosion: function () {
+        if (!this.canPlaySound('explosion')) return;
         const ctx = this.getContext();
         if (!ctx) return;
         const now = ctx.currentTime;
-        const bufferSize = ctx.sampleRate * 0.35;
+        const bufferSize = Math.floor(ctx.sampleRate * 0.35);
         const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
         const data = buffer.getChannelData(0);
         for (let i = 0; i < bufferSize; i++) {
@@ -284,6 +326,7 @@ Game.Audio = {
     },
 
     playCoin: function () {
+        if (!this.canPlaySound('coin')) return;
         const ctx = this.getContext();
         if (!ctx) return;
         const now = ctx.currentTime;
@@ -301,6 +344,7 @@ Game.Audio = {
     },
 
     playTimeShift: function () {
+        if (!this.canPlaySound('timeShift')) return;
         const ctx = this.getContext();
         if (!ctx) return;
         const now = ctx.currentTime;
@@ -325,7 +369,27 @@ Game.Audio = {
         osc2.stop(now + 0.46);
     },
 
+    playRewind: function () {
+        if (!this.canPlaySound('rewind')) return;
+        const ctx = this.getContext();
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(180, now);
+        osc.frequency.exponentialRampToValueAtTime(900, now + 0.22);
+        osc.frequency.exponentialRampToValueAtTime(320, now + 0.40);
+        gain.gain.setValueAtTime(0.28, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.42);
+    },
+
     playLevelUp: function () {
+        if (!this.canPlaySound('levelUp')) return;
         const ctx = this.getContext();
         if (!ctx) return;
         const now = ctx.currentTime;
@@ -350,6 +414,7 @@ Game.Audio = {
     },
 
     playFreeze: function () {
+        if (!this.canPlaySound('freeze')) return;
         const ctx = this.getContext();
         if (!ctx) return;
         const now = ctx.currentTime;
@@ -368,7 +433,254 @@ Game.Audio = {
 };
 
 // ============================================================================
-// 4. MODULE GAME.AUTH & GAME.CLOUD (FIREBASE & SERVER ADMIN TỪ XA)
+// 4. FLOATING TEXT POOLING & GỘP ĐỔI FONT 1 LẦN/FRAME (NÂNG CẤP 3)
+// ============================================================================
+Game.FloatingTextPool = {
+    MAX_TEXTS: 20,
+    pool: [],
+
+    init: function () {
+        this.pool = [];
+        for (let i = 0; i < this.MAX_TEXTS; i++) {
+            this.pool.push({
+                active: false,
+                x: 0,
+                y: 0,
+                vy: -35,
+                text: '',
+                color: '#ffffff',
+                alpha: 1.0,
+                life: 0,
+                maxLife: 0.85
+            });
+        }
+    },
+
+    spawn: function (x, y, text, color = '#ffffff') {
+        if (this.pool.length === 0) this.init();
+
+        // 1. Tìm phần tử chưa kích hoạt
+        let item = this.pool.find(t => !t.active);
+
+        // 2. Nếu đã đầy 20 chữ, tái sử dụng chữ có thời gian sống cao nhất (sắp biến mất)
+        if (!item) {
+            let maxLifeVal = -1;
+            for (let i = 0; i < this.pool.length; i++) {
+                if (this.pool[i].life > maxLifeVal) {
+                    maxLifeVal = this.pool[i].life;
+                    item = this.pool[i];
+                }
+            }
+        }
+
+        if (item) {
+            item.active = true;
+            item.x = x + (Math.random() * 16 - 8);
+            item.y = y;
+            item.vy = -45 - Math.random() * 20;
+            item.text = String(text);
+            item.color = color;
+            item.alpha = 1.0;
+            item.life = 0;
+            item.maxLife = 0.85;
+        }
+    },
+
+    update: function (dt) {
+        for (let i = 0; i < this.pool.length; i++) {
+            const item = this.pool[i];
+            if (!item.active) continue;
+
+            item.life += dt;
+            if (item.life >= item.maxLife) {
+                item.active = false;
+                continue;
+            }
+
+            item.y += item.vy * dt;
+            item.vy += 20 * dt; // Giảm dần tốc độ bay lên
+            item.alpha = Math.max(0, 1 - (item.life / item.maxLife));
+        }
+    },
+
+    /**
+     * Vẽ toàn bộ text sát thương: GỘP ctx.font ĐÚNG 1 LẦN DUY NHẤT để tối ưu hiệu năng
+     */
+    render: function (ctx, camera) {
+        if (!ctx) return;
+        const camX = (camera && camera.x) ? camera.x : 0;
+        const camY = (camera && camera.y) ? camera.y : 0;
+
+        // Kiểm tra xem có text nào active không trước khi chuẩn bị context
+        let hasActive = false;
+        for (let i = 0; i < this.pool.length; i++) {
+            if (this.pool[i].active) {
+                hasActive = true;
+                break;
+            }
+        }
+        if (!hasActive) return;
+
+        ctx.save();
+        // THAO TÁC NÂNG CẤP 3: Gán thuộc tính font & căn lề đồng bộ 1 lần duy nhất
+        ctx.font = 'bold 15px "Segoe UI", Roboto, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        for (let i = 0; i < this.pool.length; i++) {
+            const item = this.pool[i];
+            if (!item.active) continue;
+
+            const screenX = item.x - camX;
+            const screenY = item.y - camY;
+
+            ctx.globalAlpha = item.alpha;
+            // Viền chữ bóng đổ đen nhẹ
+            ctx.fillStyle = '#000000';
+            ctx.fillText(item.text, screenX + 1, screenY + 1);
+
+            // Chữ hiển thị màu tương ứng
+            ctx.fillStyle = item.color;
+            ctx.fillText(item.text, screenX, screenY);
+        }
+
+        ctx.restore();
+    }
+};
+Game.FloatingTextPool.init();
+
+// ============================================================================
+// 5. KỸ NĂNG QUAY NGƯỢC THỜI GIAN (CHRONO REWIND) - RING BUFFER (NÂNG CẤP 4)
+// ============================================================================
+Game.ChronoRewind = {
+    BUFFER_SECONDS: 3.0,
+    SAMPLE_RATE: 60, // 60 mẫu mỗi giây (~16.6ms)
+    maxCapacity: 180, // 3 giây * 60 fps = 180 slots
+    buffer: [],
+    head: 0,
+    totalRecorded: 0,
+    rewindCooldown: 0,
+    maxCooldown: 12.0,
+
+    init: function () {
+        this.maxCapacity = Math.round(this.BUFFER_SECONDS * this.SAMPLE_RATE);
+        this.buffer = new Array(this.maxCapacity);
+        for (let i = 0; i < this.maxCapacity; i++) {
+            this.buffer[i] = {
+                x: 1920,
+                y: 1920,
+                hp: 100,
+                shield: 50,
+                rage: 0,
+                timeline: 'PRESENT',
+                valid: false
+            };
+        }
+        this.head = 0;
+        this.totalRecorded = 0;
+        this.rewindCooldown = 0;
+    },
+
+    /**
+     * Ghi lại trạng thái người chơi vào Ring Buffer mỗi frame
+     */
+    recordSnapshot: function (dt) {
+        if (!Game.player || Game.state.isPaused) return;
+
+        if (this.rewindCooldown > 0) {
+            this.rewindCooldown = Math.max(0, this.rewindCooldown - dt);
+        }
+
+        const slot = this.buffer[this.head];
+        slot.x = Game.player.x;
+        slot.y = Game.player.y;
+        slot.hp = Game.player.hp;
+        slot.shield = Game.player.shield;
+        slot.rage = Game.state.rage || 0;
+        slot.timeline = Game.state.timeline || 'PRESENT';
+        slot.valid = true;
+
+        this.head = (this.head + 1) % this.maxCapacity;
+        if (this.totalRecorded < this.maxCapacity) {
+            this.totalRecorded++;
+        }
+    },
+
+    /**
+     * Kích hoạt kỹ năng: Quay ngược vị trí và phục hồi lượng Máu/Khiên cao nhất trong 3s trước
+     */
+    activate: function () {
+        if (this.rewindCooldown > 0) {
+            Game.Systems.notify(`Quay Ngược Hồi Chiêu: ${this.rewindCooldown.toFixed(1)}s`, '#f87171');
+            return false;
+        }
+        if (this.totalRecorded < 10) {
+            Game.Systems.notify('Chưa đủ dữ liệu thời gian để quay ngược!', '#94a3b8');
+            return false;
+        }
+
+        // Lấy vị trí cách đây 3 giây (hoặc điểm xa nhất đã ghi nhận trong buffer)
+        const targetIndex = (this.head - this.totalRecorded + this.maxCapacity) % this.maxCapacity;
+        const targetSnapshot = this.buffer[targetIndex];
+
+        if (!targetSnapshot || !targetSnapshot.valid) {
+            Game.Systems.notify('Dòng thời gian bị gián đoạn!', '#ef4444');
+            return false;
+        }
+
+        // Tìm lượng HP cao nhất mà người chơi sở hữu trong 3 giây qua
+        let maxRecordedHp = Game.player.hp;
+        let maxRecordedShield = Game.player.shield;
+        for (let i = 0; i < this.totalRecorded; i++) {
+            const snap = this.buffer[i];
+            if (snap && snap.valid) {
+                if (snap.hp > maxRecordedHp) maxRecordedHp = snap.hp;
+                if (snap.shield > maxRecordedShield) maxRecordedShield = snap.shield;
+            }
+        }
+
+        // Hiệu ứng dịch chuyển thời không
+        const oldX = Game.player.x;
+        const oldY = Game.player.y;
+
+        Game.player.x = targetSnapshot.x;
+        Game.player.y = targetSnapshot.y;
+        Game.player.vx = 0;
+        Game.player.vy = 0;
+        Game.player.hp = Math.min(Game.player.maxHp, Math.max(Game.player.hp, maxRecordedHp));
+        Game.player.shield = Math.min(Game.player.maxShield, Math.max(Game.player.shield, maxRecordedShield));
+
+        this.rewindCooldown = this.maxCooldown;
+        this.totalRecorded = 0; // Đặt lại buffer sau khi kích hoạt thành công
+
+        if (Game.Audio && typeof Game.Audio.playRewind === 'function') {
+            Game.Audio.playRewind();
+        }
+
+        // Hiệu ứng chớp màn hình thời gian
+        const flashEl = document.getElementById('time-flash');
+        if (flashEl) {
+            flashEl.classList.remove('flash-active');
+            void flashEl.offsetWidth;
+            flashEl.classList.add('flash-active');
+            setTimeout(() => flashEl.classList.remove('flash-active'), 400);
+        }
+
+        Game.Systems.notify('⏳ QUAY NGƯỢC THỜI GIAN 3 GIÂY!', '#38bdf8');
+        Game.FloatingTextPool.spawn(Game.player.x, Game.player.y - 20, 'CHRONO REWIND!', '#38bdf8');
+
+        if (Game.World && typeof Game.World.ensureSafePlayerPosition === 'function') {
+            Game.World.ensureSafePlayerPosition();
+        }
+
+        Game.Systems.updateUI();
+        return true;
+    }
+};
+Game.ChronoRewind.init();
+
+// ============================================================================
+// 6. MODULE XÁC THỰC BẢO MẬT & ĐỒNG BỘ ĐÁM MÂY (Game.Auth & Game.Cloud)
 // ============================================================================
 Game.Auth = {
     currentUser: null,
@@ -378,7 +690,7 @@ Game.Auth = {
     hashPassword: function (password) {
         let hash = 0x811c9dc5;
         const salt = "TIME_TRAVEL_AUTH_SECURE_2026";
-        const str = password + salt;
+        const str = String(password) + salt;
         for (let i = 0; i < str.length; i++) {
             hash ^= str.charCodeAt(i);
             hash = Math.imul(hash, 0x01000193) >>> 0;
@@ -405,7 +717,44 @@ Game.Auth = {
         Game.state.isPaused = false;
     },
 
-    login: async function (username, password) {
+    openAuthModal: function () {
+        const authModal = document.getElementById('auth-modal');
+        if (authModal) {
+            authModal.classList.remove('hidden');
+            authModal.style.display = 'flex';
+        } else {
+            Game.Cloud.showLoginModal();
+        }
+        Game.state.isPaused = true;
+    },
+
+    setAuthError: function (msg) {
+        if (Game.UI && typeof Game.UI.setAuthError === 'function') {
+            Game.UI.setAuthError(msg);
+        }
+        const errEl = document.getElementById('auth-error-msg') || document.getElementById('auth-error');
+        if (errEl) {
+            errEl.textContent = msg;
+            errEl.classList.remove('hidden');
+            errEl.style.display = 'block';
+        }
+        Game.Systems.notify(msg, '#ef4444');
+    },
+
+    clearAuthError: function () {
+        if (Game.UI && typeof Game.UI.setAuthError === 'function') {
+            Game.UI.setAuthError('');
+        }
+        const errEl = document.getElementById('auth-error-msg') || document.getElementById('auth-error');
+        if (errEl) {
+            errEl.textContent = '';
+            errEl.classList.add('hidden');
+            errEl.style.display = 'none';
+        }
+    },
+
+    register: async function (username, password) {
+        this.clearAuthError();
         if (typeof username !== 'string' || typeof password !== 'string') {
             const uInput = document.getElementById('auth-username') || document.querySelector('#auth-modal input[type="text"]');
             const pInput = document.getElementById('auth-password') || document.querySelector('#auth-modal input[type="password"]');
@@ -417,11 +766,130 @@ Game.Auth = {
         const p = (password || '').trim();
 
         if (!u || !p) {
-            Game.Systems.notify('Vui lòng nhập đầy đủ tên tài khoản và mật khẩu!', '#ef4444');
+            this.setAuthError('Vui lòng nhập đầy đủ tên tài khoản và mật khẩu!');
             return false;
         }
 
-        // BẢO MẬT ĐỘC QUYỀN DUY NHẤT: bao2010 (case-insensitive) & Bao28102010
+        if (u.length < 3) {
+            this.setAuthError('Tên tài khoản phải có ít nhất 3 ký tự!');
+            return false;
+        }
+
+        if (p.length < 4) {
+            this.setAuthError('Mật khẩu phải có ít nhất 4 ký tự!');
+            return false;
+        }
+
+        if (u.toLowerCase() === 'bao2010') {
+            this.setAuthError('Tài khoản này là định danh Quản trị viên, không thể đăng ký mới!');
+            return false;
+        }
+
+        const sanitizedUid = u.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        const passHash = this.hashPassword(p);
+
+        if (!window.db) {
+            this.setAuthError('Không có kết nối Firebase Database! Vui lòng kiểm tra mạng.');
+            return false;
+        }
+
+        try {
+            const userRef = window.db.ref('users/' + sanitizedUid);
+            const snapshot = await userRef.once('value');
+
+            if (snapshot.exists() && snapshot.val() !== null) {
+                this.setAuthError('Tên tài khoản này đã có người sử dụng!');
+                return false;
+            }
+
+            const initialSave = {
+                gold: 200,
+                level: 1,
+                timeline: 'PRESENT',
+                timeShards: 0,
+                weaponLevels: { iron_sword: 0, cyber_sword: 0, laser_gun: 0, void_scythe: 0, chrono_cannon: 0 },
+                currentWeapon: 'iron_sword',
+                ownedWeapons: ['iron_sword'],
+                characterStats: JSON.parse(JSON.stringify(DEFAULT_CHARACTER_STATS)),
+                selectedCharacter: 'time_traveler',
+                upgradeLevels: { hp: 0, speed: 0, damage: 0 },
+                equippedRelics: [],
+                ownedRelics: [],
+                hasPet: false,
+                loopLevel: 1,
+                unlockedWaypoints: [true, false, false],
+                hasSeed: false,
+                isTreePlanted: false,
+                chestOiled: false,
+                chestOpened: false,
+                usedGiftcodes: [],
+                quests: [
+                    { id: 1, title: 'Diệt 5 Quái Cổ Đại ở Quá Khứ', cur: 0, target: 5, reward: 300, expReward: 60, done: false },
+                    { id: 2, title: 'Nhặt hạt giống (Hiện Tại) & Trồng cây cạnh vực (Quá Khứ)', cur: 0, target: 1, reward: 500, expReward: 100, done: false },
+                    { id: 3, title: 'Mua Vũ khí Tương Lai & Hạ Boss Thời Không', cur: 0, target: 1, reward: 2000, expReward: 300, done: false },
+                    { id: 4, title: 'Hạ gục 3 Boss Phụ Kỷ Nguyên (Quá Khứ/Hiện Tại/Tương Lai)', cur: 0, target: 3, reward: 1500, expReward: 250, done: false }
+                ],
+                sideQuestCounter: 0,
+                activeSideQuest: null,
+                playerPos: { x: 1920, y: 1920 }
+            };
+
+            const newUserData = {
+                uid: sanitizedUid,
+                username: u,
+                passwordHash: passHash,
+                createdAt: firebase.database.ServerValue.TIMESTAMP,
+                lastSeen: firebase.database.ServerValue.TIMESTAMP,
+                role: 'PLAYER',
+                isBanned: false,
+                banReason: '',
+                isOnline: true,
+                gold: 200,
+                level: 1,
+                timeline: 'PRESENT',
+                timeShards: 0,
+                currentWeapon: 'iron_sword',
+                saveData: initialSave
+            };
+
+            await userRef.set(newUserData);
+
+            this.isAdmin = false;
+            this.isLoggedIn = true;
+            this.currentUser = { uid: sanitizedUid, username: u, role: 'PLAYER' };
+            Game.state.adminUnlocked = false;
+
+            Game.Systems.applyLoadedSaveData(initialSave);
+            Game.Cloud.setupPresence(sanitizedUid);
+            Game.Cloud.initUserSync(sanitizedUid);
+
+            Game.Systems.notify(`🎉 Đăng ký thành công! Chào mừng ${u}!`, '#4ade80');
+            this.closeAllAuthModals();
+            return true;
+        } catch (err) {
+            console.error('[Register Error]', err);
+            this.setAuthError('Lỗi máy chủ khi đăng ký tài khoản!');
+            return false;
+        }
+    },
+
+    login: async function (username, password) {
+        this.clearAuthError();
+        if (typeof username !== 'string' || typeof password !== 'string') {
+            const uInput = document.getElementById('auth-username') || document.querySelector('#auth-modal input[type="text"]');
+            const pInput = document.getElementById('auth-password') || document.querySelector('#auth-modal input[type="password"]');
+            username = uInput ? uInput.value : '';
+            password = pInput ? pInput.value : '';
+        }
+
+        const u = (username || '').trim();
+        const p = (password || '').trim();
+
+        if (!u || !p) {
+            this.setAuthError('Vui lòng nhập đầy đủ tên tài khoản và mật khẩu!');
+            return false;
+        }
+
         if (u.toLowerCase() === 'bao2010') {
             if (p === 'Bao28102010') {
                 this.isAdmin = true;
@@ -429,28 +897,35 @@ Game.Auth = {
                 this.currentUser = { uid: 'admin_bao2010', username: 'bao2010', role: 'ADMIN' };
                 Game.state.adminUnlocked = true;
 
+                const btnOpenAdmin = document.getElementById('btn-open-admin-panel');
+                if (btnOpenAdmin) {
+                    btnOpenAdmin.classList.remove('hidden');
+                    btnOpenAdmin.style.display = 'block';
+                }
                 const adminEl = document.getElementById('admin-panel');
                 if (adminEl) adminEl.classList.remove('hidden');
 
                 Game.Systems.ensureAdminDrawerShortcut();
                 Game.Systems.syncAdminInputs();
-                Game.Cloud.renderAdminServerTab();
+                Game.Cloud.startAdminPresenceMonitoring();
 
-                Game.Systems.notify('⚡ XÁC THỰC THÀNH CÔNG: QUYỀN CHỦ TỂ ADMIN BẢO 2010 ĐÃ KÍCH HOẠT!', '#ffd740');
-                Game.Systems.saveGame();
-
+                Game.Systems.notify('⚡ CHỦ TỂ ADMIN BẢO 2010 ĐÃ KÍCH HOẠT QUYỀN HẠN!', '#ffd740');
                 this.closeAllAuthModals();
                 return true;
             } else {
-                Game.Systems.notify('⛔ Sai mật khẩu Admin Bao 2010!', '#ef4444');
+                this.setAuthError('Sai mật khẩu Admin Bao 2010!');
                 return false;
             }
         }
 
-        // TÀI KHOẢN NGƯỜI CHƠI THƯỜNG: Kiểm tra và chống đè tài khoản trên Firebase
         this.isAdmin = false;
         Game.state.adminUnlocked = false;
 
+        const btnOpenAdmin = document.getElementById('btn-open-admin-panel');
+        if (btnOpenAdmin) {
+            btnOpenAdmin.classList.add('hidden');
+            btnOpenAdmin.style.display = 'none';
+        }
         const adminEl = document.getElementById('admin-panel');
         if (adminEl) adminEl.classList.add('hidden');
         const adminShortcut = document.getElementById('drawer-admin-shortcut');
@@ -460,104 +935,109 @@ Game.Auth = {
         const passHash = this.hashPassword(p);
 
         if (!window.db) {
-            // Trường hợp không có mạng hoặc chưa nhúng Firebase
-            this.isLoggedIn = true;
-            this.currentUser = { uid: sanitizedUid, username: u, role: 'PLAYER' };
-            Game.Systems.notify(`Đăng nhập chế độ Offline: [${u}]`, '#38bdf8');
-            this.closeAllAuthModals();
-            return true;
+            this.setAuthError('Chưa kết nối Firebase Database! Không thể đăng nhập.');
+            return false;
         }
 
         try {
             const userRef = window.db.ref('users/' + sanitizedUid);
-            const snap = await userRef.once('value');
-            const data = snap.val();
+            const snapshot = await userRef.once('value');
 
-            if (data) {
-                // TÀI KHOẢN ĐÃ TỒN TẠI: Kiểm tra mật khẩu
-                if (data.passwordHash && data.passwordHash !== passHash) {
-                    Game.Systems.notify(`❌ Tên tài khoản "${u}" đã có người đăng ký! Vui lòng nhập đúng mật khẩu hoặc chọn tên khác.`, '#ef4444');
-                    return false;
-                }
+            if (!snapshot.exists() || snapshot.val() === null) {
+                this.setAuthError('Tài khoản không tồn tại! Vui lòng bấm Đăng Ký.');
+                return false;
+            }
 
-                // Nếu tài khoản cũ chưa có passwordHash (từ phiên bản trước), cập nhật mã hóa ngay
-                if (!data.passwordHash) {
-                    await userRef.update({ passwordHash: passHash });
-                }
+            const data = snapshot.val();
 
-                // Kiểm tra trạng thái Ban
-                if (data.isBanned) {
-                    Game.Systems.notify('🚫 Tài khoản này hiện đang bị khóa bởi Admin!', '#ef4444');
-                    Game.Cloud.handleBannedState(data.banReason);
-                    return false;
-                }
+            if (data.passwordHash && data.passwordHash !== passHash) {
+                this.setAuthError('Sai mật khẩu! Vui lòng thử lại.');
+                return false;
+            }
 
-                // ĐỒNG BỘ DỮ LIỆU TỪ FIREBASE VỀ LOCAL ĐỂ TRÁNH LỆCH FILE SAVE
-                if (typeof data.gold === 'number') Game.state.gold = data.gold;
-                if (typeof data.level === 'number') Game.state.level = data.level;
-                if (typeof data.timeShards === 'number') Game.state.timeShards = data.timeShards;
-                if (data.currentWeapon && Game.Systems.weaponsConfig[data.currentWeapon]) {
-                    Game.state.currentWeapon = data.currentWeapon;
-                }
-
-                await userRef.update({ lastLogin: Date.now(), isOnline: true });
-            } else {
-                // TÀI KHOẢN MỚI: Tự động khởi tạo dữ liệu lên Firebase
-                await userRef.set({
-                    uid: sanitizedUid,
-                    username: u,
-                    passwordHash: passHash,
-                    gold: Game.state.gold || 200,
-                    level: Game.state.level || 1,
-                    currentWeapon: Game.state.currentWeapon || 'iron_sword',
-                    timeShards: Game.state.timeShards || 0,
-                    isBanned: false,
-                    banReason: '',
-                    createdAt: Date.now(),
-                    lastLogin: Date.now(),
-                    isOnline: true
-                });
-                Game.Systems.notify(`🎉 Đăng ký tài khoản mới thành công! Chào mừng ${u}!`, '#4ade80');
+            if (data.isBanned) {
+                this.setAuthError('Tài khoản này hiện đang bị đóng băng!');
+                Game.Cloud.handleBannedState(data.banReason);
+                return false;
             }
 
             this.isLoggedIn = true;
             this.currentUser = { uid: sanitizedUid, username: u, role: 'PLAYER' };
 
+            if (data.saveData && typeof data.saveData === 'object') {
+                Game.Systems.applyLoadedSaveData(data.saveData);
+            } else {
+                Game.state.gold = typeof data.gold === 'number' ? data.gold : Game.state.gold;
+                Game.state.level = typeof data.level === 'number' ? data.level : Game.state.level;
+                Game.state.timeShards = typeof data.timeShards === 'number' ? data.timeShards : Game.state.timeShards;
+                if (data.currentWeapon) Game.state.currentWeapon = data.currentWeapon;
+                Game.Systems.recalculateMaxStats();
+            }
+
+            Game.Cloud.setupPresence(sanitizedUid);
+            Game.Cloud.initUserSync(sanitizedUid);
+
             Game.Systems.notify(`Chào mừng chiến binh [${u}] trở lại!`, '#38bdf8');
-            Game.Cloud.initUserSync(sanitizedUid, u);
-            Game.Systems.recalculateMaxStats();
+            this.closeAllAuthModals();
             Game.Systems.updateUI();
             Game.Systems.saveGame();
-
-            this.closeAllAuthModals();
             return true;
         } catch (err) {
-            console.error('[Auth Error]', err);
-            Game.Systems.notify('Lỗi máy chủ khi xác thực tài khoản!', '#ef4444');
+            console.error('[Login Error]', err);
+            this.setAuthError('Lỗi máy chủ trong quá trình đăng nhập!');
             return false;
         }
     },
 
     loginAsGuest: function () {
+        this.clearAuthError();
         const guestId = 'guest_' + Math.floor(Math.random() * 89999 + 10000);
         this.isAdmin = false;
         this.isLoggedIn = true;
         Game.state.adminUnlocked = false;
         this.currentUser = { uid: guestId, username: 'Khách ' + guestId.slice(-4), role: 'GUEST' };
 
-        Game.Systems.notify(`Tham gia dưới dạng Khách! Dữ liệu chỉ lưu tạm thời.`, '#94a3b8');
+        Game.Systems.notify('Chơi dạng Khách! Dữ liệu không lưu lên Cloud Firebase.', '#94a3b8');
         this.closeAllAuthModals();
         return true;
     },
 
-    logout: function () {
-        if (Game.Cloud._userListenerRef && Game.Cloud._userListenerHandler) {
-            Game.Cloud._userListenerRef.off('value', Game.Cloud._userListenerHandler);
+    logout: async function () {
+        if (this.currentUser && !this.isAdmin && this.currentUser.role === 'PLAYER') {
+            await Game.Systems.saveGame();
         }
 
         if (window.db && this.currentUser && !this.isAdmin) {
-            window.db.ref('users/' + this.currentUser.uid).update({ isOnline: false }).catch(() => {});
+            try {
+                await window.db.ref('users/' + this.currentUser.uid).update({
+                    isOnline: false,
+                    lastSeen: firebase.database.ServerValue.TIMESTAMP
+                });
+            } catch (e) {
+                console.warn('[Logout Presence Update Failed]', e);
+            }
         }
+
+        if (Game.Cloud._userListenerRef && Game.Cloud._userListenerHandler) {
+            Game.Cloud._userListenerRef.off('value', Game.Cloud._userListenerHandler);
+            Game.Cloud._userListenerRef = null;
+            Game.Cloud._userListenerHandler = null;
+        }
+        if (Game.Cloud._presenceRef) {
+            Game.Cloud._presenceRef.off();
+            Game.Cloud._presenceRef = null;
+        }
+        if (Game.Cloud._adminUsersRef && Game.Cloud._adminUsersHandler) {
+            Game.Cloud._adminUsersRef.off('value', Game.Cloud._adminUsersHandler);
+            Game.Cloud._adminUsersRef = null;
+            Game.Cloud._adminUsersHandler = null;
+        }
+
+        Game.state = Object.assign({}, DEFAULT_GAME_STATE);
+        Game.state.weaponLevels = Object.assign({}, DEFAULT_GAME_STATE.weaponLevels);
+        Game.state.upgradeLevels = Object.assign({}, DEFAULT_GAME_STATE.upgradeLevels);
+        Game.state.characterStats = JSON.parse(JSON.stringify(DEFAULT_CHARACTER_STATS));
+        Game.player = Object.assign({}, DEFAULT_PLAYER_STATE);
 
         this.currentUser = null;
         this.isAdmin = false;
@@ -565,33 +1045,60 @@ Game.Auth = {
         Game.state.adminUnlocked = false;
         Game.state.isPaused = true;
 
+        const btnOpenAdmin = document.getElementById('btn-open-admin-panel');
+        if (btnOpenAdmin) {
+            btnOpenAdmin.classList.add('hidden');
+            btnOpenAdmin.style.display = 'none';
+        }
         const adminEl = document.getElementById('admin-panel');
         if (adminEl) adminEl.classList.add('hidden');
         const adminShortcut = document.getElementById('drawer-admin-shortcut');
         if (adminShortcut) adminShortcut.remove();
 
-        const authModal = document.getElementById('auth-modal');
-        if (authModal) {
-            authModal.classList.remove('hidden');
-            authModal.style.display = 'flex';
-        } else {
-            Game.Cloud.showLoginModal();
-        }
-        Game.Systems.notify('Đã đăng xuất tài khoản. Đang chờ đăng nhập...', '#94a3b8');
+        const shopModal = document.getElementById('shop-modal');
+        if (shopModal) shopModal.classList.add('hidden');
+
+        this.openAuthModal();
+        Game.Systems.updateUI();
+        Game.Systems.notify('Đã đăng xuất tài khoản an toàn.', '#38bdf8');
     }
 };
 
+// ============================================================================
+// 7. HỆ THỐNG ĐỒNG BỘ ĐÁM MÂY & REALTIME PRESENCE (Game.Cloud)
+// ============================================================================
 Game.Cloud = {
     _userListenerRef: null,
     _userListenerHandler: null,
+    _presenceRef: null,
     _adminUsersRef: null,
     _adminUsersHandler: null,
 
-    initUserSync: function (uid, username) {
-        if (!window.db) return;
+    setupPresence: function (uid) {
+        if (!window.db || !uid) return;
         const userRef = window.db.ref('users/' + uid);
+        const connectedRef = window.db.ref('.info/connected');
 
-        userRef.onDisconnect().update({ isOnline: false });
+        if (this._presenceRef) this._presenceRef.off();
+
+        this._presenceRef = connectedRef;
+        this._presenceRef.on('value', snap => {
+            if (snap.val() === true) {
+                userRef.onDisconnect().update({
+                    isOnline: false,
+                    lastSeen: firebase.database.ServerValue.TIMESTAMP
+                });
+
+                userRef.update({
+                    isOnline: true,
+                    lastSeen: firebase.database.ServerValue.TIMESTAMP
+                });
+            }
+        });
+    },
+
+    initUserSync: function (uid) {
+        if (!window.db || !uid) return;
         this.listenUserChanges(uid);
     },
 
@@ -609,19 +1116,19 @@ Game.Cloud = {
             `;
             document.body.appendChild(banOverlay);
         }
-        const reason = banReason || 'Vi phạm chính sách thời không.';
+        const reason = banReason || 'Vi phạm điều khoản không gian thời gian.';
         banOverlay.innerHTML = `
             <div style="font-size: 64px; margin-bottom: 15px;">🚫</div>
-            <h1 style="font-size: 32px; letter-spacing: 2px; color: #ff3860;">TÀI KHOẢN ĐÃ BỊ ĐÓNG BĂNG</h1>
-            <p style="font-size: 18px; color: #cbd5e1; margin-top: 10px; max-width: 500px;">Lý do: <strong>${reason}</strong></p>
-            <p style="font-size: 14px; color: #64748b; margin-top: 20px;">Vui lòng liên hệ Admin Bảo để gỡ án cấm.</p>
+            <h1 style="font-size: 30px; letter-spacing: 2px; color: #ff3860;">TÀI KHOẢN ĐÃ BỊ ĐÓNG BĂNG</h1>
+            <p style="font-size: 16px; color: #cbd5e1; margin-top: 10px; max-width: 500px;">Lý do: <strong>${reason}</strong></p>
+            <p style="font-size: 14px; color: #64748b; margin-top: 20px;">Vui lòng liên hệ Admin Bảo 2010 để được giải quyết.</p>
         `;
         banOverlay.classList.remove('hidden');
         banOverlay.style.display = 'flex';
     },
 
     listenUserChanges: function (uid) {
-        if (!window.db) return;
+        if (!window.db || !uid) return;
         if (this._userListenerRef && this._userListenerHandler) {
             this._userListenerRef.off('value', this._userListenerHandler);
         }
@@ -631,7 +1138,6 @@ Game.Cloud = {
             const data = snap.val();
             if (!data) return;
 
-            // 1. KIỂM TRA LỆNH KHÓA TÀI KHOẢN (BAN)
             if (data.isBanned === true) {
                 this.handleBannedState(data.banReason);
                 return;
@@ -643,7 +1149,6 @@ Game.Cloud = {
                 }
             }
 
-            // 2. LẮNG NGHE VÀ NHẬN PHẦN THƯỞNG TỪ ADMIN (pendingGift)
             if (data.pendingGift) {
                 const gift = data.pendingGift;
                 let rewardDesc = [];
@@ -669,9 +1174,9 @@ Game.Cloud = {
                 this._userListenerRef.child('pendingGift').remove();
 
                 if (rewardDesc.length > 0) {
-                    const notifyText = `🎁 ADMIN BẢO VỪA TẶNG BẠN: ${rewardDesc.join(' | ')}!`;
-                    Game.Systems.notify(notifyText, '#00e5ff');
+                    Game.Systems.notify(`🎁 QUÀ TẶNG ADMIN BẢO: ${rewardDesc.join(' | ')}!`, '#00e5ff');
                     if (Game.Audio && typeof Game.Audio.playLevelUp === 'function') Game.Audio.playLevelUp();
+                    Game.Systems.recalculateMaxStats();
                     Game.Systems.updateShopButtons();
                     Game.Systems.updateUI();
                     Game.Systems.saveGame();
@@ -680,20 +1185,66 @@ Game.Cloud = {
         });
     },
 
-    syncCurrentPlayerData: function () {
-        if (!window.db || !Game.Auth.currentUser || Game.Auth.isAdmin) return;
+    syncSaveDataToCloud: function () {
+        if (!window.db || !Game.Auth.currentUser || Game.Auth.isAdmin || Game.Auth.currentUser.role !== 'PLAYER') {
+            return;
+        }
+
         const uid = Game.Auth.currentUser.uid;
-        window.db.ref('users/' + uid).update({
+        const saveDataPayload = {
             gold: Game.state.gold || 0,
             level: Game.state.level || 1,
+            exp: Game.state.exp || 0,
+            maxExp: Game.state.maxExp || 100,
+            timeline: Game.state.timeline || 'PRESENT',
+            timeShards: Game.state.timeShards || 0,
+            loopLevel: Game.state.loopLevel || 1,
+            currentWeapon: Game.state.currentWeapon || 'iron_sword',
+            ownedWeapons: Game.state.ownedWeapons || ['iron_sword'],
+            weaponLevels: Game.state.weaponLevels || {},
+            upgradeLevels: Game.state.upgradeLevels || {},
+            characterStats: Game.state.characterStats || {},
+            selectedCharacter: Game.state.selectedCharacter || 'time_traveler',
+            equippedRelics: Game.state.equippedRelics || [],
+            ownedRelics: Game.state.ownedRelics || [],
+            hasPet: !!Game.state.hasPet,
+            unlockedWaypoints: Game.state.unlockedWaypoints || [true, false, false],
+            hasSeed: !!Game.state.hasSeed,
+            isTreePlanted: !!Game.state.isTreePlanted,
+            chestOiled: !!Game.state.chestOiled,
+            chestOpened: !!Game.state.chestOpened,
+            currentTitle: Game.state.currentTitle || 'Kẻ Du Hành Tân Thủ',
+            achievements: Game.state.achievements || [],
+            usedGiftcodes: Game.state.usedGiftcodes || [],
+            quests: Game.Systems.quests || [],
+            sideQuestCounter: Game.Systems.sideQuestCounter || 0,
+            activeSideQuest: Game.Systems.activeSideQuest || null,
+            playerPos: {
+                x: Math.round(Game.player.x || 1920),
+                y: Math.round(Game.player.y || 1920)
+            },
+            lastSaved: firebase.database.ServerValue.TIMESTAMP
+        };
+
+        const rootUpdate = {
+            gold: Game.state.gold || 0,
+            level: Game.state.level || 1,
+            timeline: Game.state.timeline || 'PRESENT',
             timeShards: Game.state.timeShards || 0,
             currentWeapon: Game.state.currentWeapon || 'iron_sword',
-            lastSync: Date.now()
-        }).catch(() => {});
+            lastSeen: firebase.database.ServerValue.TIMESTAMP,
+            isOnline: true,
+            saveData: saveDataPayload
+        };
+
+        window.db.ref('users/' + uid).update(rootUpdate).catch(err => {
+            console.warn('[Cloud Sync Error]', err);
+        });
     },
 
-    adminFetchUsersRealtime: function (callback) {
+    startAdminPresenceMonitoring: function () {
         if (!window.db || !Game.Auth.isAdmin) return;
+
         if (this._adminUsersRef && this._adminUsersHandler) {
             this._adminUsersRef.off('value', this._adminUsersHandler);
         }
@@ -701,10 +1252,77 @@ Game.Cloud = {
         this._adminUsersRef = window.db.ref('users');
         this._adminUsersHandler = this._adminUsersRef.on('value', snap => {
             const data = snap.val() || {};
-            if (callback) callback(data);
+            this.renderAdminServerList(data);
         }, err => {
-            console.error('[Admin Realtime Sync Error]', err);
+            console.error('[Admin Presence Error]', err);
         });
+
+        this.renderAdminServerTab();
+    },
+
+    renderAdminServerList: function (users) {
+        const tbody = document.getElementById('server-players-tbody');
+        const countEl = document.getElementById('admin-online-count');
+        const userKeys = Object.keys(users);
+
+        let onlineCount = 0;
+        userKeys.forEach(k => {
+            if (users[k] && users[k].isOnline === true) {
+                onlineCount++;
+            }
+        });
+
+        if (countEl) {
+            countEl.textContent = onlineCount.toString();
+        }
+
+        if (!tbody) return;
+
+        if (userKeys.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: #94a3b8; padding: 12px;">Chưa có dữ liệu người chơi trên Firebase.</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = userKeys.map(k => {
+            const u = users[k];
+            const isOnline = !!u.isOnline;
+            const isBanned = !!u.isBanned;
+            const level = u.level || (u.saveData && u.saveData.level) || 1;
+            const timeline = u.timeline || (u.saveData && u.saveData.timeline) || 'PRESENT';
+            const timelineText = timeline === 'PAST' ? 'Quá Khứ' : timeline === 'FUTURE' ? 'Tương Lai' : 'Hiện Tại';
+
+            let lastSeenStr = 'Chưa rõ';
+            if (u.lastSeen) {
+                const date = new Date(u.lastSeen);
+                lastSeenStr = date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' ' +
+                              date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+            }
+
+            const statusDot = isOnline
+                ? `<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:#22c55e; box-shadow: 0 0 6px #22c55e;"></span> Online`
+                : `<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:#64748b;"></span> Offline`;
+
+            return `
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                    <td style="padding: 8px 6px; font-weight: bold; color: ${isBanned ? '#ef4444' : '#38bdf8'};">
+                        ${u.username || k} ${isBanned ? '<span style="font-size:10px; color:#ef4444;">[ĐÃ KHÓA]</span>' : ''}
+                    </td>
+                    <td style="padding: 8px 6px; text-align: center; color: #fde047;">${level}</td>
+                    <td style="padding: 8px 6px; text-align: center; color: #a5b4fc;">${timelineText}</td>
+                    <td style="padding: 8px 6px; text-align: center; font-size: 11px; color: #94a3b8;">${lastSeenStr}</td>
+                    <td style="padding: 8px 6px; text-align: center; font-size: 11px;">${statusDot}</td>
+                    <td style="padding: 8px 6px; text-align: center;">
+                        <div style="display: flex; gap: 4px; justify-content: center;">
+                            ${isBanned
+                                ? `<button type="button" class="btn-action" style="background:#22c55e; color:#fff; font-size:10px; padding:3px 6px;" onclick="Game.Cloud.adminUnbanUser('${k}')">Mở Khóa</button>`
+                                : `<button type="button" class="btn-action" style="background:#ef4444; color:#fff; font-size:10px; padding:3px 6px;" onclick="Game.Cloud.promptBan('${k}')">Khóa</button>`
+                            }
+                            <button type="button" class="btn-action" style="background:#0284c7; color:#fff; font-size:10px; padding:3px 6px;" onclick="Game.Cloud.promptGift('${k}')">Tặng Quà</button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
     },
 
     adminBanUser: function (targetUid, reason) {
@@ -735,72 +1353,6 @@ Game.Cloud = {
         });
     },
 
-    renderAdminServerTab: function () {
-        const adminPanel = document.getElementById('admin-panel');
-        if (!adminPanel) return;
-
-        let serverTab = document.getElementById('admin-server-remote-tab');
-        if (!serverTab) {
-            serverTab = document.createElement('div');
-            serverTab.id = 'admin-server-remote-tab';
-            serverTab.style.cssText = `
-                margin-top: 14px; padding-top: 12px; border-top: 1px dashed rgba(255, 215, 64, 0.4);
-            `;
-            serverTab.innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                    <span style="font-weight: bold; color: #ffd740; font-size: 13px;">🌐 QUẢN TRỊ SERVER TỪ XA (FIREBASE)</span>
-                    <span id="admin-user-count" style="font-size: 11px; color: #38bdf8;">Đang kết nối...</span>
-                </div>
-                <div id="admin-user-list" style="max-height: 220px; overflow-y: auto; background: rgba(0,0,0,0.6); border-radius: 6px; padding: 6px; font-size: 11px; border: 1px solid rgba(255,255,255,0.1);">
-                    <em>Đang lắng nghe dữ liệu người chơi theo thời gian thực...</em>
-                </div>
-            `;
-            adminPanel.appendChild(serverTab);
-        }
-
-        // Bật đồng bộ thời gian thực cho danh sách user trên admin
-        this.adminFetchUsersRealtime(users => {
-            const container = document.getElementById('admin-user-list');
-            const countEl = document.getElementById('admin-user-count');
-            if (!container) return;
-
-            const keys = Object.keys(users);
-            if (countEl) countEl.textContent = `Tổng: ${keys.length} người chơi`;
-
-            if (keys.length === 0) {
-                container.innerHTML = '<span style="color: #94a3b8;">Chưa có dữ liệu người chơi trên Firebase.</span>';
-                return;
-            }
-
-            container.innerHTML = keys.map(k => {
-                const u = users[k];
-                const isBanned = !!u.isBanned;
-                const isOnline = !!u.isOnline;
-                const weaponName = (Game.Systems.weaponsConfig[u.currentWeapon] && Game.Systems.weaponsConfig[u.currentWeapon].name) || u.currentWeapon || 'Chưa rõ';
-
-                return `
-                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.08); padding: 6px 0;">
-                        <div style="line-height: 1.4;">
-                            <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${isOnline ? '#22c55e' : '#64748b'}; margin-right: 4px;"></span>
-                            <strong style="color: ${isBanned ? '#ef4444' : '#38bdf8'}; font-size: 12px;">${u.username || k}</strong>
-                            ${isBanned ? '<span style="color:#ef4444; font-weight:bold; margin-left:4px;">[BANNED]</span>' : ''}
-                            <div style="color: #94a3b8; font-size: 10px;">
-                                Cấp: <span style="color:#fde047;">${u.level || 1}</span> | Vàng: <span style="color:#fde047;">${(u.gold || 0).toLocaleString()}G</span> | Mảnh: <span style="color:#38bdf8;">${u.timeShards || 0}💎</span> | VK: ${weaponName}
-                            </div>
-                        </div>
-                        <div style="display: flex; gap: 4px; align-items: center;">
-                            ${isBanned
-                                ? `<button type="button" class="btn-action" style="background:#22c55e; color:#fff; font-size:10px; padding:3px 6px;" onclick="Game.Cloud.adminUnbanUser('${k}')">Gỡ Ban</button>`
-                                : `<button type="button" class="btn-action" style="background:#ef4444; color:#fff; font-size:10px; padding:3px 6px;" onclick="Game.Cloud.promptBan('${k}')">Khóa</button>`
-                            }
-                            <button type="button" class="btn-action" style="background:#0284c7; color:#fff; font-size:10px; padding:3px 6px;" onclick="Game.Cloud.promptGift('${k}')">Tặng Quà</button>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        });
-    },
-
     promptBan: function (targetUid) {
         const reason = prompt(`Nhập lý do khóa tài khoản [${targetUid}]:`, 'Vi phạm quy định game');
         if (reason !== null) {
@@ -820,6 +1372,44 @@ Game.Cloud = {
         this.adminSendGift(targetUid, { gold: gold, shards: shards });
     },
 
+    renderAdminServerTab: function () {
+        const adminPanel = document.getElementById('admin-panel');
+        if (!adminPanel) return;
+
+        let serverTab = document.getElementById('admin-server-remote-tab');
+        if (!serverTab) {
+            serverTab = document.createElement('div');
+            serverTab.id = 'admin-server-remote-tab';
+            serverTab.style.cssText = `
+                margin-top: 14px; padding-top: 12px; border-top: 1px dashed rgba(255, 215, 64, 0.4);
+            `;
+            serverTab.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <span style="font-weight: bold; color: #ffd740; font-size: 13px;">🌐 BẢNG GIÁM SÁT MÁY CHỦ THỜI GIAN THỰC</span>
+                    <span style="font-size: 11px; color: #38bdf8;">Online: <strong id="admin-online-count" style="color:#22c55e;">0</strong></span>
+                </div>
+                <div style="max-height: 240px; overflow-y: auto; background: rgba(0,0,0,0.65); border-radius: 6px; padding: 4px; font-size: 11px; border: 1px solid rgba(255,255,255,0.1);">
+                    <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                        <thead>
+                            <tr style="border-bottom: 1px solid rgba(255,255,255,0.2); color: #94a3b8; font-size: 10px;">
+                                <th style="padding: 4px;">Người Chơi</th>
+                                <th style="padding: 4px; text-align:center;">Cấp</th>
+                                <th style="padding: 4px; text-align:center;">Kỷ Nguyên</th>
+                                <th style="padding: 4px; text-align:center;">Hoạt Động</th>
+                                <th style="padding: 4px; text-align:center;">Trạng Thái</th>
+                                <th style="padding: 4px; text-align:center;">Thao Tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="server-players-tbody">
+                            <tr><td colspan="6" style="text-align: center; color: #94a3b8; padding: 12px;">Đang tải danh sách người chơi...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            adminPanel.appendChild(serverTab);
+        }
+    },
+
     showLoginModal: function () {
         const authModal = document.getElementById('auth-modal');
         if (authModal) {
@@ -834,26 +1424,31 @@ Game.Cloud = {
             modal.id = 'login-modal';
             modal.style.cssText = `
                 position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-                background: rgba(8, 10, 20, 0.88); backdrop-filter: blur(8px);
+                background: rgba(8, 10, 20, 0.92); backdrop-filter: blur(8px);
                 z-index: 99999; display: flex; justify-content: center; align-items: center;
                 font-family: 'Segoe UI', Tahoma, sans-serif;
             `;
             modal.innerHTML = `
-                <div style="background: rgba(18, 24, 38, 0.95); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 12px; padding: 26px; width: 340px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); text-align: center;">
-                    <h2 style="color: #38bdf8; margin-bottom: 6px; font-size: 20px; letter-spacing: 1px;">⚔️ ĐĂNG NHẬP THỜI KHÔNG</h2>
-                    <p style="color: #94a3b8; font-size: 12px; margin-bottom: 18px;">Nhập tài khoản để kích hoạt dữ liệu Cloud</p>
+                <div style="background: rgba(18, 24, 38, 0.96); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 12px; padding: 26px; width: 340px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); text-align: center;">
+                    <h2 style="color: #38bdf8; margin-bottom: 6px; font-size: 20px; letter-spacing: 1px;">⚔️ KẺ DU HÀNH THỜI KHÔNG</h2>
+                    <p style="color: #94a3b8; font-size: 12px; margin-bottom: 14px;">Xác thực tài khoản để kích hoạt dữ liệu Cloud</p>
+                    <div id="auth-error-msg" style="display:none; color: #ef4444; font-size: 12px; margin-bottom: 10px; background: rgba(239,68,68,0.1); padding: 6px; border-radius: 4px;"></div>
                     <input type="text" id="auth-username" placeholder="Tên tài khoản..." style="width: 100%; box-sizing: border-box; padding: 10px 12px; margin-bottom: 10px; background: rgba(0,0,0,0.5); border: 1px solid #334155; border-radius: 6px; color: #fff; font-size: 14px;" />
                     <input type="password" id="auth-password" placeholder="Mật khẩu..." style="width: 100%; box-sizing: border-box; padding: 10px 12px; margin-bottom: 16px; background: rgba(0,0,0,0.5); border: 1px solid #334155; border-radius: 6px; color: #fff; font-size: 14px;" />
-                    <button type="button" id="auth-submit-btn" style="width: 100%; padding: 11px; background: linear-gradient(135deg, #0284c7, #38bdf8); border: none; border-radius: 6px; color: #fff; font-weight: bold; cursor: pointer; font-size: 14px; letter-spacing: 1px; box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);">
-                        VÀO GAME
-                    </button>
+                    <div style="display: flex; gap: 8px;">
+                        <button type="button" id="auth-login-btn" style="flex: 1; padding: 10px; background: linear-gradient(135deg, #0284c7, #38bdf8); border: none; border-radius: 6px; color: #fff; font-weight: bold; cursor: pointer; font-size: 13px;">
+                            ĐĂNG NHẬP
+                        </button>
+                        <button type="button" id="auth-register-btn" style="flex: 1; padding: 10px; background: linear-gradient(135deg, #059669, #10b981); border: none; border-radius: 6px; color: #fff; font-weight: bold; cursor: pointer; font-size: 13px;">
+                            ĐĂNG KÝ
+                        </button>
+                    </div>
                 </div>
             `;
             document.body.appendChild(modal);
 
-            document.getElementById('auth-submit-btn').addEventListener('click', () => {
-                Game.Auth.login();
-            });
+            document.getElementById('auth-login-btn').addEventListener('click', () => Game.Auth.login());
+            document.getElementById('auth-register-btn').addEventListener('click', () => Game.Auth.register());
 
             const pInput = document.getElementById('auth-password');
             if (pInput) {
@@ -868,16 +1463,12 @@ Game.Cloud = {
 };
 
 // ============================================================================
-// 5. HỆ THỐNG TRUNG TÂM & QUẢN LÝ DỮ LIỆU GAME (Game.Systems)
+// 8. HỆ THỐNG QUẢN LÝ DỮ LIỆU & LOGIC TOÀN CỤC (Game.Systems)
 // ============================================================================
 Game.Systems = {
-    SAVE_KEY: 'TIME_TRAVELER_PRO_PERSISTENCE_V3',
-    LEGACY_KEYS: ['TIME_TRAVELER_SAVE_V2', 'TIME_TRAVELER_SAVE_V1', 'TIME_TRAVELER_SAVE'],
-    SECRET_SALT: 'CHRONO_ARCHITECT_2026_SALT_KEY',
     quests: [],
     sideQuestCounter: 0,
     activeSideQuest: null,
-    lastQuestStateHash: '',
     goldClickTimestamps: [],
     _autoSaveInterval: null,
 
@@ -915,32 +1506,23 @@ Game.Systems = {
         window.Game.Combat.characterSkillsets = {
             time_traveler: Game.charactersConfig.time_traveler.skills,
             shadow_assassin: Game.charactersConfig.shadow_assassin.skills,
-            iron_juggernaut: Game.charactersConfig.iron_juggernaut.skills,
-            chrono_traveler: Game.charactersConfig.time_traveler.skills,
-            cyber_ninja: Game.charactersConfig.shadow_assassin.skills,
-            void_mage: Game.charactersConfig.iron_juggernaut.skills
+            iron_juggernaut: Game.charactersConfig.iron_juggernaut.skills
         };
         if (typeof window.Game.Combat.attack !== 'function') {
             window.Game.Combat.attack = function () {
                 this.useSkill(0, { manualAim: false });
             };
         }
+        // Đảm bảo tích hợp bộ FloatingTextPool vào Combat
+        if (typeof window.Game.Combat.spawnFloatingText !== 'function') {
+            window.Game.Combat.spawnFloatingText = function (x, y, text, color) {
+                Game.FloatingTextPool.spawn(x, y, text, color);
+            };
+        }
     },
 
     _ensureCharacterStateIntegrity: function () {
         const state = Game.state;
-        const legacyMap = {
-            chrono_striker: 'time_traveler',
-            chrono_traveler: 'time_traveler',
-            void_ranger: 'shadow_assassin',
-            cyber_ninja: 'shadow_assassin',
-            aegis_guardian: 'iron_juggernaut',
-            void_mage: 'iron_juggernaut'
-        };
-        if (legacyMap[state.selectedCharacter]) {
-            state.selectedCharacter = legacyMap[state.selectedCharacter];
-        }
-
         if (!Array.isArray(state.unlockedCharacters) || state.unlockedCharacters.length === 0) {
             state.unlockedCharacters = ['time_traveler', 'shadow_assassin', 'iron_juggernaut'];
         }
@@ -971,25 +1553,6 @@ Game.Systems = {
         });
     },
 
-    unlockCharacter: function (charId) {
-        if (!Game.charactersConfig[charId]) return false;
-        this._ensureCharacterStateIntegrity();
-
-        if (!Game.state.unlockedCharacters.includes(charId)) {
-            Game.state.unlockedCharacters.push(charId);
-            this.notify(`🎉 MỞ KHÓA NHÂN VẬT: ${Game.charactersConfig[charId].name}!`, '#00e5ff');
-            if (Game.Audio && typeof Game.Audio.playLevelUp === 'function') {
-                Game.Audio.playLevelUp();
-            }
-            this.saveGame();
-            if (Game.UI && typeof Game.UI.renderCharacters === 'function') {
-                Game.UI.renderCharacters();
-            }
-            return true;
-        }
-        return false;
-    },
-
     selectCharacter: function (charId) {
         if (!Game.charactersConfig[charId]) return false;
         this._ensureCharacterStateIntegrity();
@@ -1018,6 +1581,25 @@ Game.Systems = {
         }
         this.updateUI();
         return true;
+    },
+
+    unlockCharacter: function (charId) {
+        if (!Game.charactersConfig[charId]) return false;
+        this._ensureCharacterStateIntegrity();
+
+        if (!Game.state.unlockedCharacters.includes(charId)) {
+            Game.state.unlockedCharacters.push(charId);
+            this.notify(`🎉 MỞ KHÓA NHÂN VẬT: ${Game.charactersConfig[charId].name}!`, '#00e5ff');
+            if (Game.Audio && typeof Game.Audio.playLevelUp === 'function') {
+                Game.Audio.playLevelUp();
+            }
+            this.saveGame();
+            if (Game.UI && typeof Game.UI.renderCharacters === 'function') {
+                Game.UI.renderCharacters();
+            }
+            return true;
+        }
+        return false;
     },
 
     applyCharacterStats: function (charId) {
@@ -1085,7 +1667,6 @@ Game.Systems = {
         let effectiveSpeed = cfg.baseSpeed + speedUpgrades * 15 + bonusSpd;
         let effectiveBaseDamage = (charLevel - 1) * 5 + dmgUpgrades * 6 + (charSpecific.bonusDamage || 0);
 
-        // 1. HỆ THỐNG THỨC TỈNH VŨ KHÍ (WEAPON AWAKENING TIERS)
         const currentWeaponKey = state.currentWeapon || 'iron_sword';
         const wLvl = (state.weaponLevels && state.weaponLevels[currentWeaponKey]) || 0;
 
@@ -1106,7 +1687,6 @@ Game.Systems = {
             effectiveBaseDamage += 4;
         }
 
-        // 2. HIỆU ỨNG CỔ VẬT THỜI KHÔNG
         if (Array.isArray(state.equippedRelics)) {
             if (state.equippedRelics.includes('relic_speed')) {
                 effectiveSpeed = Math.round(effectiveSpeed * 1.15);
@@ -1159,167 +1739,71 @@ Game.Systems = {
         return Math.round(totalCp);
     },
 
-    computeChecksum: function (str, useSalt = true) {
-        const input = useSalt ? `${str}|${this.SECRET_SALT}` : str;
-        let hash = 0x811c9dc5;
-        for (let i = 0; i < input.length; i++) {
-            hash ^= input.charCodeAt(i);
-            hash = Math.imul(hash, 0x01000193) >>> 0;
-            hash = ((hash << 5) | (hash >>> 27)) >>> 0;
+    saveGame: function () {
+        if (Game.Cloud && typeof Game.Cloud.syncSaveDataToCloud === 'function') {
+            Game.Cloud.syncSaveDataToCloud();
+            return true;
         }
-        return hash.toString(16).padStart(8, '0');
+        return false;
     },
 
-    saveGame: function () {
-        try {
-            this._ensureCharacterStateIntegrity();
-            const payload = {
-                version: '3.4.0',
-                timestamp: Date.now(),
-                state: Object.assign({}, Game.state, { isPaused: false, adminUnlocked: false }),
-                player: {
-                    x: Number(Game.player.x) || 1920,
-                    y: Number(Game.player.y) || 1920,
-                    speed: Game.player.speed,
-                    hp: Game.player.hp,
-                    maxHp: Game.player.maxHp,
-                    shield: Game.player.shield,
-                    maxShield: Game.player.maxShield,
-                    baseDamageBonus: Game.player.baseDamageBonus,
-                    characterId: Game.state.selectedCharacter
-                },
-                quests: this.quests,
-                sideQuestCounter: this.sideQuestCounter,
-                activeSideQuest: this.activeSideQuest
-            };
+    applyLoadedSaveData: function (data) {
+        if (!data || typeof data !== 'object') return;
 
-            const jsonStr = JSON.stringify(payload);
-            const encoded = btoa(unescape(encodeURIComponent(jsonStr)));
-            const checksum = this.computeChecksum(encoded, true);
-            localStorage.setItem(this.SAVE_KEY, `${checksum}.${encoded}`);
+        if (typeof data.gold === 'number') Game.state.gold = data.gold;
+        if (typeof data.level === 'number') Game.state.level = data.level;
+        if (typeof data.exp === 'number') Game.state.exp = data.exp;
+        if (typeof data.maxExp === 'number') Game.state.maxExp = data.maxExp;
+        if (typeof data.timeShards === 'number') Game.state.timeShards = data.timeShards;
+        if (typeof data.loopLevel === 'number') Game.state.loopLevel = data.loopLevel;
+        if (data.timeline) Game.state.timeline = data.timeline;
+        if (data.currentWeapon) Game.state.currentWeapon = data.currentWeapon;
+        if (Array.isArray(data.ownedWeapons)) Game.state.ownedWeapons = data.ownedWeapons;
+        if (data.weaponLevels) Game.state.weaponLevels = Object.assign({}, DEFAULT_GAME_STATE.weaponLevels, data.weaponLevels);
+        if (data.upgradeLevels) Game.state.upgradeLevels = Object.assign({}, DEFAULT_GAME_STATE.upgradeLevels, data.upgradeLevels);
+        if (data.characterStats) Game.state.characterStats = Object.assign(JSON.parse(JSON.stringify(DEFAULT_CHARACTER_STATS)), data.characterStats);
+        if (data.selectedCharacter) Game.state.selectedCharacter = data.selectedCharacter;
+        if (Array.isArray(data.equippedRelics)) Game.state.equippedRelics = data.equippedRelics;
+        if (Array.isArray(data.ownedRelics)) Game.state.ownedRelics = data.ownedRelics;
+        if (typeof data.hasPet === 'boolean') Game.state.hasPet = data.hasPet;
+        if (Array.isArray(data.unlockedWaypoints)) Game.state.unlockedWaypoints = data.unlockedWaypoints;
+        if (typeof data.hasSeed === 'boolean') Game.state.hasSeed = data.hasSeed;
+        if (typeof data.isTreePlanted === 'boolean') Game.state.isTreePlanted = data.isTreePlanted;
+        if (typeof data.chestOiled === 'boolean') Game.state.chestOiled = data.chestOiled;
+        if (typeof data.chestOpened === 'boolean') Game.state.chestOpened = data.chestOpened;
+        if (data.currentTitle) Game.state.currentTitle = data.currentTitle;
+        if (Array.isArray(data.achievements)) Game.state.achievements = data.achievements;
+        if (Array.isArray(data.usedGiftcodes)) Game.state.usedGiftcodes = data.usedGiftcodes;
 
-            if (Game.Cloud && typeof Game.Cloud.syncCurrentPlayerData === 'function') {
-                Game.Cloud.syncCurrentPlayerData();
-            }
-            return true;
-        } catch (e) {
-            console.warn('[Persistence] Không thể ghi dữ liệu:', e);
-            return false;
+        if (Array.isArray(data.quests)) this.quests = data.quests;
+        if (typeof data.sideQuestCounter === 'number') this.sideQuestCounter = data.sideQuestCounter;
+        if (data.activeSideQuest) this.activeSideQuest = data.activeSideQuest;
+
+        if (data.playerPos && typeof data.playerPos.x === 'number' && typeof data.playerPos.y === 'number') {
+            Game.player.x = data.playerPos.x;
+            Game.player.y = data.playerPos.y;
         }
+
+        this._ensureCharacterStateIntegrity();
+        this.applyCharacterStats(Game.state.selectedCharacter);
+        this.renderQuestList();
+        this.updateTimelineBadge();
+        this.updateShopButtons();
+        this.syncAdminInputs();
+        this.updateUI();
     },
 
     loadGame: function () {
-        try {
-            let raw = localStorage.getItem(this.SAVE_KEY);
-            let isLegacy = false;
-
-            if (!raw) {
-                for (let i = 0; i < this.LEGACY_KEYS.length; i++) {
-                    const legacyData = localStorage.getItem(this.LEGACY_KEYS[i]);
-                    if (legacyData) {
-                        raw = legacyData;
-                        isLegacy = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!raw) return false;
-
-            let data = null;
-
-            if (raw.trim().startsWith('{')) {
-                data = JSON.parse(raw);
-            } else if (raw.includes('.')) {
-                const [savedHash, encoded] = raw.split('.');
-                if (!savedHash || !encoded) return false;
-
-                const saltedHash = this.computeChecksum(encoded, true);
-                const unsaltedHash = this.computeChecksum(encoded, false);
-
-                if (savedHash !== saltedHash && savedHash !== unsaltedHash) {
-                    console.warn('[Persistence] Checksum không khớp, bỏ qua save cũ.');
-                    return false;
-                }
-
-                const jsonStr = decodeURIComponent(escape(atob(encoded)));
-                data = JSON.parse(jsonStr);
-            } else {
-                return false;
-            }
-
-            if (data && data.state) {
-                Game.state = Object.assign({}, DEFAULT_GAME_STATE, data.state);
-                Game.state.weaponLevels = Object.assign({}, DEFAULT_GAME_STATE.weaponLevels, data.state.weaponLevels || {});
-                Game.state.upgradeLevels = Object.assign({}, DEFAULT_GAME_STATE.upgradeLevels, data.state.upgradeLevels || {});
-                Game.state.characterStats = Object.assign(
-                    JSON.parse(JSON.stringify(DEFAULT_CHARACTER_STATS)),
-                    data.state.characterStats || {}
-                );
-
-                if (typeof Game.state.gold !== 'number' || !isFinite(Game.state.gold) || Game.state.gold > 999999999) {
-                    Game.state.gold = 999999;
-                }
-                if (typeof Game.state.timeShards !== 'number' || !isFinite(Game.state.timeShards) || Game.state.timeShards > 999999) {
-                    Game.state.timeShards = 999;
-                }
-                Game.state.usedGiftcodes = Array.isArray(data.state.usedGiftcodes)
-                    ? data.state.usedGiftcodes
-                        .map(c => String(c).toUpperCase())
-                        .filter(c => c !== 'BAO28102010@@')
-                    : [];
-                Game.state.isPaused = false;
-            }
-
-            // Thu hồi toàn bộ quyền Admin lưu trong LocalStorage
-            Game.state.adminUnlocked = false;
-            if (Game.Auth) Game.Auth.isAdmin = false;
-
-            if (data && data.player) {
-                Game.player = Object.assign({}, DEFAULT_PLAYER_STATE, Game.player, data.player);
-            }
-
-            if (data && Array.isArray(data.quests)) {
-                this.quests = data.quests;
-            }
-            if (data && typeof data.sideQuestCounter === 'number') {
-                this.sideQuestCounter = data.sideQuestCounter;
-            }
-            if (data && data.activeSideQuest) {
-                this.activeSideQuest = data.activeSideQuest;
-            }
-
-            this._ensureCharacterStateIntegrity();
-            this.applyCharacterStats(Game.state.selectedCharacter);
-
-            if (isLegacy) {
-                this.saveGame();
-            }
-            return true;
-        } catch (err) {
-            console.warn('[Persistence] Khởi tạo dữ liệu mặc định do lỗi đọc save:', err);
-            Game.state.adminUnlocked = false;
-            if (Game.Auth) Game.Auth.isAdmin = false;
-            this._ensureCharacterStateIntegrity();
-            this.applyCharacterStats('time_traveler');
-            return false;
-        }
+        return true;
     },
 
-    resetSaveData: function () {
-        try {
-            localStorage.removeItem(this.SAVE_KEY);
-            this.LEGACY_KEYS.forEach(k => localStorage.removeItem(k));
-        } catch (e) {}
-        location.reload();
+    logout: function () {
+        return Game.Auth.logout();
     },
 
-    // ========================================================================
-    // CÁC HÀM QUẢN TRỊ ADMIN PANEL (CHỈ HOẠT ĐỘNG KHI Game.Auth.isAdmin = true)
-    // ========================================================================
     adminSetStat: function (statType, value) {
         if (!Game.Auth.isAdmin) {
-            this.notify('⛔ Cảnh báo: Chỉ Admin Bảo 2010 mới được can thiệp chỉ số!', '#ef4444');
+            this.notify('⛔ Chỉ Admin Bảo 2010 mới có quyền can thiệp chỉ số!', '#ef4444');
             return;
         }
 
@@ -1357,7 +1841,7 @@ Game.Systems = {
             const baseDmgWithoutBonus = ((s.level || 1) - 1) * 5 + ((s.upgradeLevels?.damage || 0) * 6);
             cStats.bonusDamage = Math.max(0, val - baseDmgWithoutBonus);
             this.recalculateMaxStats();
-            this.notify(`🔥 Đã đặt Sát thương cơ bản: +${p.baseDamageBonus.toLocaleString()}`, '#f97316');
+            this.notify(`🔥 Đã đặt Sát thương: +${p.baseDamageBonus.toLocaleString()}`, '#f97316');
         }
 
         this.syncAdminInputs();
@@ -1381,7 +1865,7 @@ Game.Systems = {
 
     adminAction: function (action) {
         if (!Game.Auth.isAdmin) {
-            this.notify('⛔ Cảnh báo: Chỉ Admin Bảo 2010 mới được dùng quyền hạn này!', '#ef4444');
+            this.notify('⛔ Cảnh báo: Bạn không có quyền Admin!', '#ef4444');
             return;
         }
 
@@ -1412,7 +1896,7 @@ Game.Systems = {
                     }
                 });
             }
-            this.notify('💀 Đã tiêu diệt toàn bộ Quái & Boss!', '#ef4444');
+            this.notify('💀 Đã tiêu diệt toàn bộ Quái & Boss trên bản đồ!', '#ef4444');
         } else if (action === 'nextLoop') {
             Game.state.loopLevel = (Game.state.loopLevel || 1) + 1;
             if (Game.Enemies && typeof Game.Enemies.init === 'function') {
@@ -1458,7 +1942,7 @@ Game.Systems = {
         section.className = 'drawer-section';
         section.innerHTML = `
             <button type="button" class="btn-action" style="width: 100%; border-color: #ffd740; background: linear-gradient(135deg, rgba(255, 215, 64, 0.25), rgba(213, 0, 249, 0.28)); color: #fde047;" onclick="Game.Systems.toggleAdminPanel()">
-                ⚡ Bật / Tắt Bảng Admin
+                ⚡ Mở / Đóng Bảng Admin
             </button>
         `;
         drawer.insertBefore(section, drawer.children[1] || null);
@@ -1528,7 +2012,7 @@ Game.Systems = {
                 this.unlockCharacter('shadow_assassin');
                 this.unlockCharacter('iron_juggernaut');
                 this.unlockTitle('⚡ ĐẤNG SÁNG TẠO BẢO ADMIN ⚡');
-                successMessage = '⚡ GIFTCODE ADMIN: +50k Vàng, +100💎, Full Tướng & Bất Tử! (Bảng Admin chỉ mở qua đăng nhập bao2010)';
+                successMessage = '⚡ GIFTCODE ADMIN: +50k Vàng, +100💎, Full Tướng & Bất Tử!';
                 isSuccess = true;
                 break;
 
@@ -1651,9 +2135,24 @@ Game.Systems = {
             btnAuthLogin.onclick = () => Game.Auth.login();
         }
 
+        const btnAuthRegister = document.getElementById('btn-auth-register');
+        if (btnAuthRegister) {
+            btnAuthRegister.onclick = () => Game.Auth.register();
+        }
+
         const btnGuest = document.getElementById('btn-auth-guest');
         if (btnGuest) {
             btnGuest.onclick = () => Game.Auth.loginAsGuest();
+        }
+
+        const btnLogoutList = document.querySelectorAll('#btn-logout, .btn-logout, #hud-btn-logout');
+        btnLogoutList.forEach(btn => {
+            btn.onclick = () => Game.Auth.logout();
+        });
+
+        const btnOpenAdmin = document.getElementById('btn-open-admin-panel');
+        if (btnOpenAdmin) {
+            btnOpenAdmin.onclick = () => Game.Systems.toggleAdminPanel();
         }
 
         const pInputs = document.querySelectorAll('#auth-password, input[type="password"]');
@@ -1663,12 +2162,12 @@ Game.Systems = {
             };
         });
 
-        document.querySelectorAll('button').forEach(btn => {
-            const txt = (btn.textContent || '').trim().toLowerCase();
-            if ((txt.includes('đăng nhập') || txt.includes('vào game')) && !btn.id.includes('shop')) {
-                btn.onclick = () => Game.Auth.login();
-            } else if (txt.includes('chơi khách') || txt.includes('đăng xuất')) {
-                btn.onclick = () => Game.Auth.loginAsGuest();
+        // Gán phím tắt hoặc nút bấm kỹ năng Quay Ngược Thời Gian (phím R hoặc nút HUD nếu có)
+        window.addEventListener('keydown', e => {
+            if (e.key === 'r' || e.key === 'R') {
+                if (!Game.state.isPaused && Game.Auth.isLoggedIn) {
+                    this.triggerChronoRewind();
+                }
             }
         });
     },
@@ -1682,31 +2181,6 @@ Game.Systems = {
         ];
 
         this._syncCombatSkillsets();
-        this.loadGame();
-
-        Game.state.adminUnlocked = false;
-        if (Game.Auth) Game.Auth.isAdmin = false;
-        const adminEl = document.getElementById('admin-panel');
-        if (adminEl) adminEl.classList.add('hidden');
-
-        if (!this.quests.some(q => q.id === 4)) {
-            this.quests.push({
-                id: 4,
-                title: 'Hạ gục 3 Boss Phụ Kỷ Nguyên (Quá Khứ/Hiện Tại/Tương Lai)',
-                cur: 0,
-                target: 3,
-                reward: 1500,
-                expReward: 250,
-                done: false
-            });
-        }
-
-        if (Array.isArray(Game.state.usedGiftcodes)) {
-            Game.state.usedGiftcodes = Game.state.usedGiftcodes.filter(
-                code => String(code).toUpperCase() !== 'BAO28102010@@'
-            );
-        }
-
         this._ensureCharacterStateIntegrity();
         this.applyCharacterStats(Game.state.selectedCharacter);
         this.setupSecretGiftcodeTrigger();
@@ -1720,20 +2194,37 @@ Game.Systems = {
         this.bindAuthUiEvents();
 
         if (!Game.Auth.isLoggedIn) {
-            Game.Cloud.showLoginModal();
+            Game.Auth.openAuthModal();
             Game.state.isPaused = true;
         }
 
         if (this._autoSaveInterval) clearInterval(this._autoSaveInterval);
         this._autoSaveInterval = setInterval(() => {
-            this.saveGame();
-        }, 5000);
+            if (Game.Auth.isLoggedIn && !Game.Auth.isAdmin) {
+                this.saveGame();
+            }
+        }, 18000);
+    },
+
+    /**
+     * Update vòng lặp chính của Systems: Cập nhật Ring Buffer và Floating Texts
+     */
+    update: function (dt) {
+        if (!Game.state.isPaused) {
+            Game.ChronoRewind.recordSnapshot(dt);
+            Game.FloatingTextPool.update(dt);
+        }
+    },
+
+    /**
+     * Kích hoạt kỹ năng Quay Ngược Thời Gian
+     */
+    triggerChronoRewind: function () {
+        return Game.ChronoRewind.activate();
     },
 
     notify: function (text, color = '#ffffff') {
-        if (Game.Combat && typeof Game.Combat.spawnFloatingText === 'function') {
-            Game.Combat.spawnFloatingText(Game.player.x, Game.player.y - 38, text, color);
-        }
+        Game.FloatingTextPool.spawn(Game.player.x, Game.player.y - 38, text, color);
     },
 
     onItemPickedUp: function (type, amount = 1) {
@@ -1793,6 +2284,7 @@ Game.Systems = {
         if (Game.Audio && typeof Game.Audio.playTimeShift === 'function') {
             Game.Audio.playTimeShift();
         }
+
         this.saveGame();
     },
 
@@ -1932,7 +2424,7 @@ Game.Systems = {
 
         if (leveledUp) {
             if (Game.Audio && typeof Game.Audio.playLevelUp === 'function') Game.Audio.playLevelUp();
-            this.notify(`LEVEL UP! Cấp ${Game.state.level} (+Chỉ số cơ bản)!`, '#fde047');
+            this.notify(`LEVEL UP! Cấp ${Game.state.level}!`, '#fde047');
             this.syncAdminInputs();
         }
         this.updateUI();
@@ -2005,7 +2497,7 @@ Game.Systems = {
                 questUpdated = true;
             }
             Game.state.loopLevel = (Game.state.loopLevel || 1) + 1;
-            this.notify(`CỔNG CHU KỲ ${Game.state.loopLevel} ĐÃ MỞ! Quái vật gia tăng uy lực.`, '#00e5ff');
+            this.notify(`CỔNG CHU KỲ ${Game.state.loopLevel} ĐÃ MỞ! Quái vật tăng uy lực.`, '#00e5ff');
         }
 
         if (this.activeSideQuest && !this.activeSideQuest.done) {
@@ -2024,10 +2516,12 @@ Game.Systems = {
             }
         }
 
-        if (questUpdated) this.renderQuestList();
+        if (questUpdated) {
+            this.renderQuestList();
+            this.saveGame();
+        }
         this.updateShopButtons();
         this.updateUI();
-        this.saveGame();
     },
 
     checkAndGenerateSideQuest: function () {
@@ -2477,3 +2971,12 @@ Game.Systems = {
         }
     }
 };
+
+// ============================================================================
+// KHỞI CHẠY TỔNG HỢP KHI TẢI TRANG
+// ============================================================================
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => Game.Systems.init());
+} else {
+    Game.Systems.init();
+}

@@ -1,21 +1,127 @@
 /**
- * FILE: world.js (BẢN ĐẠI TU SIÊU CẤP HỆ THỐNG THẾ GIỚI, ĐÀI TẾ & RADAR LA BÀN TỐI TÂN)
+ * FILE: world.js (BẢN SIÊU CẤP ĐẠI TU CÔNG NGHỆ: OFFSCREEN CANVAS, SPATIAL HASH GRID & TIME RIFTS)
  * KẺ DU HÀNH THỜI KHÔNG
  * 
- * TÍNH NĂNG NÂNG CẤP:
- * 1. BỔ SUNG 2 ĐÀI TẾ CỔ ĐẠI / TRẠM NĂNG LƯỢNG CHIẾN THUẬT:
- *    - Đài Chiến Thần (x: 1520, y: 1820): Đứng trong bán kính 85px trong 1.5s -> +25% sát thương cận chiến & hồi 100% Khiên.
- *    - Đài Tinh Không (x: 2320, y: 1820): Đứng trong bán kính 85px trong 1.5s -> Giảm 30% Hồi chiêu kỹ năng trong 12s.
- *    - Cột sáng Rune 3D xoay tròn ấn tượng khi vẽ bản đồ.
- * 2. NÂNG CẤP RADAR MINIMAP & LA BÀN THỜI KHÔNG:
- *    - Vẽ biểu tượng Ngôi Sao 4 Cánh Tím/Vàng cho Boss Phụ (isMiniBoss).
- *    - Vẽ chấm xanh ngọc phát sáng cho 2 Đài Năng Lượng.
- *    - La bàn thông minh (_getObjectiveTarget) tự động định vị Boss Phụ (isMiniBoss) còn sống khi làm Nhiệm vụ #4.
- * 3. BẢO TỒN NGUYÊN VẸN 100% CÁC CƠ CHẾ VẬT LÝ, BẢY ĐỊA HÌNH VÀ NHÂN QUẢ THỜI GIAN.
+ * NÂNG CẤP KỸ THUẬT & TÍNH NĂNG:
+ * 1. OFFSCREEN CANVAS CACHING: Render trước toàn bộ nền tĩnh (mặt đất, vực sâu, chi tiết gạch) ra Canvas phụ
+ *    theo từng kỷ nguyên. Main loop chỉ gọi đúng 1 lệnh ctx.drawImage trích xuất khung nhìn Camera.
+ * 2. SPATIAL HASH GRID (128x128): Cấu trúc chia ô không gian tối ưu va chạm cực nhanh giữa Đạn, Quái & Địa hình.
+ * 3. KHE NỨT THỜI GIAN & TRỤ MÔI TRƯỜNG (TIME RIFTS & ENVIRONMENTAL TRAPS): Trụ năng lượng thời gian kích hoạt 
+ *    sóng làm chậm (Slow Pulse AoE) hoặc gây nổ phản vật chất dọn quái diện rộng khi tương tác/nhận sát thương.
+ * 4. BẢO TỒN NGUYÊN VẸN 100% CƠ CHẾ CŨ: Nhân quả thời gian, radar Minimap phân loại quái, la bàn thông minh,
+ *    Đài Chiến Thần & Đài Tinh Không.
  */
 
 window.Game = window.Game || {};
 
+// ============================================================================
+// MODULE 1: SPATIAL HASH GRID (128 x 128 px)
+// ============================================================================
+class SpatialHashGrid {
+    constructor(cellSize = 128) {
+        this.cellSize = cellSize;
+        this.cells = new Map();
+        this._queryId = 0;
+    }
+
+    clear() {
+        this.cells.clear();
+    }
+
+    _getKey(cx, cy) {
+        return `${cx},${cy}`;
+    }
+
+    _getCellCoords(x, y) {
+        return {
+            cx: Math.floor(x / this.cellSize),
+            cy: Math.floor(y / this.cellSize)
+        };
+    }
+
+    insert(entity) {
+        if (!entity || typeof entity.x !== 'number' || typeof entity.y !== 'number') return;
+        const radius = entity.radius || entity.r || 16;
+        const minX = Math.floor((entity.x - radius) / this.cellSize);
+        const maxX = Math.floor((entity.x + radius) / this.cellSize);
+        const minY = Math.floor((entity.y - radius) / this.cellSize);
+        const maxY = Math.floor((entity.y + radius) / this.cellSize);
+
+        entity._gridCells = [];
+
+        for (let cy = minY; cy <= maxY; cy++) {
+            for (let cx = minX; cx <= maxX; cx++) {
+                const key = this._getKey(cx, cy);
+                let cell = this.cells.get(key);
+                if (!cell) {
+                    cell = [];
+                    this.cells.set(key, cell);
+                }
+                cell.push(entity);
+                entity._gridCells.push(key);
+            }
+        }
+    }
+
+    remove(entity) {
+        if (!entity || !entity._gridCells) return;
+        for (let i = 0; i < entity._gridCells.length; i++) {
+            const key = entity._gridCells[i];
+            const cell = this.cells.get(key);
+            if (cell) {
+                const idx = cell.indexOf(entity);
+                if (idx !== -1) {
+                    cell.splice(idx, 1);
+                }
+                if (cell.length === 0) {
+                    this.cells.delete(key);
+                }
+            }
+        }
+        entity._gridCells = null;
+    }
+
+    update(entity) {
+        this.remove(entity);
+        this.insert(entity);
+    }
+
+    query(x, y, w, h) {
+        const minX = Math.floor(x / this.cellSize);
+        const maxX = Math.floor((x + w) / this.cellSize);
+        const minY = Math.floor(y / this.cellSize);
+        const maxY = Math.floor((y + h) / this.cellSize);
+
+        this._queryId = (this._queryId + 1) & 0x7fffffff;
+        const currentQueryId = this._queryId;
+        const results = [];
+
+        for (let cy = minY; cy <= maxY; cy++) {
+            for (let cx = minX; cx <= maxX; cx++) {
+                const key = this._getKey(cx, cy);
+                const cell = this.cells.get(key);
+                if (cell) {
+                    for (let i = 0; i < cell.length; i++) {
+                        const ent = cell[i];
+                        if (ent._lastQueryId !== currentQueryId) {
+                            ent._lastQueryId = currentQueryId;
+                            results.push(ent);
+                        }
+                    }
+                }
+            }
+        }
+        return results;
+    }
+
+    queryRadius(x, y, radius) {
+        return this.query(x - radius, y - radius, radius * 2, radius * 2);
+    }
+}
+
+// ============================================================================
+// MODULE 2: HỆ THỐNG THẾ GIỚI CHÍNH
+// ============================================================================
 window.Game.World = {
     tileSize: 64,
     cols: 60,
@@ -30,10 +136,73 @@ window.Game.World = {
     SEED_TILE: { x: 32, y: 28 },
     CHEST_TILE: { x: 34, y: 26 },
 
-    // Cờ phát hiện giao tranh cung cấp cho Clean HUD
+    // Cờ phát hiện giao tranh cung cấp cho HUD
     isPlayerInCombat: false,
 
-    // ĐÀI TẾ CHIẾN THUẬT & TRẠM NĂNG LƯỢNG MỚI
+    // SPATIAL HASH GRID CHO TOÀN BỘ ENTITIES
+    spatialGrid: null,
+
+    // OFFSCREEN PRE-RENDER CANVASES
+    _cachedBackgrounds: {
+        PAST: null,
+        PRESENT: null,
+        FUTURE: null
+    },
+    _lastTreePlantedState: false,
+
+    // KHE NỨT THỜI GIAN & TRỤ BẪY NĂNG LƯỢNG MÔI TRƯỜNG
+    timeRifts: [
+        {
+            id: 'RIFT_SOUTH_SLOW',
+            name: 'Khe Nứt Trì Hoãn Nam Thành',
+            type: 'TIME_SLOW',
+            x: 1820,
+            y: 2020,
+            radius: 130,
+            activeTimer: 0,
+            activeDuration: 6.0,
+            cooldown: 18.0,
+            currentCooldown: 0,
+            isTriggered: false,
+            shockwaveR: 0,
+            hp: 60,
+            maxHp: 60
+        },
+        {
+            id: 'RIFT_NORTH_VORTEX',
+            name: 'Trụ Năng Lượng Nghịch Đảo',
+            type: 'VORTEX_EXPLODE',
+            x: 2050,
+            y: 1380,
+            radius: 140,
+            activeTimer: 0,
+            activeDuration: 1.2,
+            cooldown: 22.0,
+            currentCooldown: 0,
+            isTriggered: false,
+            shockwaveR: 0,
+            hp: 80,
+            maxHp: 80
+        },
+        {
+            id: 'RIFT_WEST_CHEST',
+            name: 'Vòng Xoáy Lượng Tử Hộ Vệ',
+            type: 'TIME_SLOW',
+            x: 2250,
+            y: 1650,
+            radius: 120,
+            activeTimer: 0,
+            activeDuration: 5.5,
+            cooldown: 16.0,
+            currentCooldown: 0,
+            isTriggered: false,
+            shockwaveR: 0,
+            hp: 50,
+            maxHp: 50
+        }
+    ],
+
+    // ĐÀI TẾ CHIẾN THUẬT & TRẠM NĂNG LƯỢNG
     shrines: [
         {
             id: 'SHRINE_WAR',
@@ -154,10 +323,21 @@ window.Game.World = {
         this.decorGrid = [];
         this.isPlayerInCombat = false;
 
-        // Reset bộ đếm đài tế
+        // Khởi tạo Lưới Không Gian (Spatial Hash Grid)
+        this.spatialGrid = new SpatialHashGrid(128);
+
+        // Reset bộ đếm đài tế & khe nứt
         for (let i = 0; i < this.shrines.length; i++) {
             this.shrines[i].currentCooldown = 0;
             this.shrines[i].stayTimer = 0;
+        }
+
+        for (let i = 0; i < this.timeRifts.length; i++) {
+            this.timeRifts[i].currentCooldown = 0;
+            this.timeRifts[i].activeTimer = 0;
+            this.timeRifts[i].isTriggered = false;
+            this.timeRifts[i].shockwaveR = 0;
+            this.timeRifts[i].hp = this.timeRifts[i].maxHp;
         }
 
         if (window.Game && window.Game.state) {
@@ -219,11 +399,20 @@ window.Game.World = {
                         break;
                     }
                 }
-                // Tránh tạo vật cản đè lên Đài Năng Lượng
+                // Tránh tạo vật cản đè lên Đài Năng Lượng & Khe Nứt
                 if (!nearAnomalyOrShrine) {
                     for (let s = 0; s < this.shrines.length; s++) {
                         const sh = this.shrines[s];
                         if (Math.hypot(wx - sh.x, wy - sh.y) < sh.radius + 60) {
+                            nearAnomalyOrShrine = true;
+                            break;
+                        }
+                    }
+                }
+                if (!nearAnomalyOrShrine) {
+                    for (let rf = 0; rf < this.timeRifts.length; rf++) {
+                        const rift = this.timeRifts[rf];
+                        if (Math.hypot(wx - rift.x, wy - rift.y) < rift.radius + 60) {
                             nearAnomalyOrShrine = true;
                             break;
                         }
@@ -249,7 +438,148 @@ window.Game.World = {
 
         this._initTraps();
         this._initWeatherParticles();
+        this._buildSpatialObstacles();
+        this.rebuildAllBackgroundCaches();
         this._initialized = true;
+    },
+
+    // ========================================================================
+    // TÍNH NĂNG 1: NÂNG CẤP OFFSCREEN CANVAS CACHING CHO NỀN BẢN ĐỒ
+    // ========================================================================
+    rebuildAllBackgroundCaches: function () {
+        const timelines = ['PAST', 'PRESENT', 'FUTURE'];
+        for (let i = 0; i < timelines.length; i++) {
+            this.rebuildBackgroundCache(timelines[i]);
+        }
+        if (window.Game.state) {
+            this._lastTreePlantedState = !!window.Game.state.isTreePlanted;
+        }
+    },
+
+    rebuildBackgroundCache: function (timeline) {
+        let offCanvas = this._cachedBackgrounds[timeline];
+        if (!offCanvas) {
+            offCanvas = document.createElement('canvas');
+            offCanvas.width = this.width;
+            offCanvas.height = this.height;
+            this._cachedBackgrounds[timeline] = offCanvas;
+        }
+
+        const offCtx = offCanvas.getContext('2d', { alpha: false });
+        if (!offCtx) return;
+
+        const ts = this.tileSize;
+
+        // Vẽ toàn bộ các ô nền đất tĩnh
+        for (let r = 0; r < this.rows; r++) {
+            for (let c = 0; c < this.cols; c++) {
+                const wx = c * ts;
+                const wy = r * ts;
+                const decor = this.decorGrid[r][c];
+                const isNorthBossZone = r < this.ABYSS_ROW;
+
+                if (r === this.ABYSS_ROW) {
+                    // Vẽ lớp đáy tĩnh của vực thẳm
+                    offCtx.fillStyle = timeline === 'FUTURE' ? '#030408' : '#0c0a10';
+                    offCtx.fillRect(wx, wy, ts, ts);
+
+                    offCtx.fillStyle =
+                        timeline === 'PAST'
+                            ? '#4a321a'
+                            : timeline === 'PRESENT'
+                            ? '#264730'
+                            : '#00d9ff';
+                    offCtx.fillRect(wx, wy, ts, 6);
+                    offCtx.fillRect(wx, wy + ts - 6, ts, 6);
+                } else {
+                    this._drawGroundTile(offCtx, wx, wy, c, r, decor, timeline, isNorthBossZone);
+                }
+            }
+        }
+    },
+
+    // ========================================================================
+    // TÍNH NĂNG 2: SPATIAL HASH GRID DÀNH CHO VẬT CẢN & ENTITY
+    // ========================================================================
+    _buildSpatialObstacles: function () {
+        if (!this.spatialGrid) return;
+        this.spatialGrid.clear();
+
+        const ts = this.tileSize;
+        for (let r = 0; r < this.rows; r++) {
+            for (let c = 0; c < this.cols; c++) {
+                const cell = this.grid[r][c];
+                if (cell === 1 || cell === 2) {
+                    this.spatialGrid.insert({
+                        id: `OBS_${c}_${r}`,
+                        type: 'OBSTACLE',
+                        obstacleType: cell,
+                        x: c * ts + ts / 2,
+                        y: r * ts + ts / 2,
+                        radius: 24,
+                        isStatic: true
+                    });
+                }
+            }
+        }
+    },
+
+    // Cập nhật động toàn bộ Quái vật, Đạn và Khe nứt vào Lưới Không Gian mỗi Frame
+    updateSpatialEntities: function (projectiles, enemies) {
+        if (!this.spatialGrid) return;
+
+        // Xóa sạch và tái lập từ các vật cản tĩnh
+        this._buildSpatialObstacles();
+
+        // 1. Thêm các khe nứt và trụ thời gian
+        for (let i = 0; i < this.timeRifts.length; i++) {
+            const rift = this.timeRifts[i];
+            this.spatialGrid.insert({
+                id: rift.id,
+                type: 'TIME_RIFT',
+                raw: rift,
+                x: rift.x,
+                y: rift.y,
+                radius: 28
+            });
+        }
+
+        // 2. Thêm Quái vật
+        const enemyList = enemies || this._getActiveEnemiesList();
+        for (let i = 0; i < enemyList.length; i++) {
+            const e = enemyList[i];
+            if (!e || e.dead || e.isDead || (typeof e.hp === 'number' && e.hp <= 0)) continue;
+            this.spatialGrid.insert({
+                id: e.id || `ENEMY_${i}`,
+                type: 'ENEMY',
+                raw: e,
+                x: e.x,
+                y: e.y,
+                radius: e.radius || e.size || 22
+            });
+        }
+
+        // 3. Thêm Đạn người chơi / quái
+        if (Array.isArray(projectiles)) {
+            for (let i = 0; i < projectiles.length; i++) {
+                const p = projectiles[i];
+                if (!p || p.dead) continue;
+                this.spatialGrid.insert({
+                    id: p.id || `PROJ_${i}`,
+                    type: 'PROJECTILE',
+                    raw: p,
+                    x: p.x,
+                    y: p.y,
+                    radius: p.radius || 6
+                });
+            }
+        }
+    },
+
+    // Truy vấn nhanh các thực thể va chạm bằng Spatial Hash
+    getNearbyEntities: function (x, y, radius) {
+        if (!this.spatialGrid) return [];
+        return this.spatialGrid.queryRadius(x, y, radius);
     },
 
     _initTraps: function () {
@@ -472,6 +802,67 @@ window.Game.World = {
         }
     },
 
+    // ========================================================================
+    // TÍNH NĂNG 3: TƯƠNG TÁC & KÍCH HOẠT KHE NỨT THỜI GIAN / BẪY MÔI TRƯỜNG
+    // ========================================================================
+    triggerTimeRift: function (riftId) {
+        const rift = this.timeRifts.find(r => r.id === riftId);
+        if (!rift || rift.currentCooldown > 0 || rift.isTriggered) return false;
+
+        rift.isTriggered = true;
+        rift.activeTimer = rift.activeDuration;
+        rift.currentCooldown = rift.cooldown;
+        rift.shockwaveR = 10;
+
+        const enemies = this._getActiveEnemiesList();
+
+        if (rift.type === 'TIME_SLOW') {
+            // Làm chậm diện rộng 70% tốc độ quái vật xung quanh
+            for (let i = 0; i < enemies.length; i++) {
+                const e = enemies[i];
+                if (!e || e.dead || e.isDead || (typeof e.hp === 'number' && e.hp <= 0)) continue;
+                if (Math.hypot(e.x - rift.x, e.y - rift.y) <= rift.radius) {
+                    e.slowTimer = 5.0;
+                    e.speedDebuff = 0.3; // Chậm 70%
+                    if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                        window.Game.Combat.spawnFloatingText(e.x, e.y - 20, '⏳ LÀM CHẬM 70%!', '#38bdf8');
+                    }
+                }
+            }
+            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                window.Game.Combat.spawnFloatingText(rift.x, rift.y - 40, '⚡ TRƯỜNG LỰC TRÌ HOÃN KÍCH HOẠT!', '#00f5ff');
+            }
+        } else if (rift.type === 'VORTEX_EXPLODE') {
+            // Nổ tung diện rộng gây sát thương hủy diệt lên quái
+            for (let i = 0; i < enemies.length; i++) {
+                const e = enemies[i];
+                if (!e || e.dead || e.isDead || (typeof e.hp === 'number' && e.hp <= 0)) continue;
+                const dist = Math.hypot(e.x - rift.x, e.y - rift.y);
+                if (dist <= rift.radius) {
+                    const dmg = Math.round(180 * (1 - dist / (rift.radius * 1.5)));
+                    if (typeof e.takeDamage === 'function') {
+                        e.takeDamage(dmg, true);
+                    } else if (typeof e.hp === 'number') {
+                        e.hp -= dmg;
+                    }
+                    if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                        window.Game.Combat.spawnFloatingText(e.x, e.y - 25, `💥 BÙNG NỔ -${dmg}!`, '#f43f5e');
+                    }
+                }
+            }
+            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                window.Game.Combat.spawnFloatingText(rift.x, rift.y - 40, '💥 NỔ NĂNG LƯỢNG LƯỢNG TỬ!', '#ff0055');
+            }
+        }
+
+        if (window.Game.Audio && typeof window.Game.Audio.playExplosion === 'function') {
+            window.Game.Audio.playExplosion();
+        }
+
+        return true;
+    },
+
+    // Kiểm tra tương tác với phím E hoặc nút tương tác Clean HUD
     getNearbyInteractable: function (px, py) {
         if (!this._initialized) this.init();
 
@@ -487,6 +878,17 @@ window.Game.World = {
         const interactRange = 85;
 
         this._checkAutoUnlockWaypoints(px, py);
+
+        // 1. Kiểm tra tương tác Khe nứt / Trụ thời gian sẵn sàng
+        for (let i = 0; i < this.timeRifts.length; i++) {
+            const rift = this.timeRifts[i];
+            const dist = Math.hypot(px - rift.x, py - rift.y);
+            if (dist <= interactRange) {
+                if (rift.currentCooldown <= 0) {
+                    return `TIME_RIFT_${rift.id}`;
+                }
+            }
+        }
 
         if (timeline === 'PRESENT' && !state.hasSeed) {
             const seedX = this.SEED_TILE.x * this.tileSize + this.tileSize / 2;
@@ -534,9 +936,6 @@ window.Game.World = {
         return cyclePos % 2 === 0;
     },
 
-    /**
-     * TÍNH TOÁN HIỆU ỨNG ĐỊA HÌNH & XỬ LÝ BUFF ĐÀI TẾ (SHRINES)
-     */
     getTerrainEffectAt: function (px, py, dt) {
         if (!this._initialized) this.init();
 
@@ -557,7 +956,32 @@ window.Game.World = {
         const nowSec = performance.now() * 0.001;
         const safeDt = dt || 0.016;
 
-        // 1. CẬP NHẬT & KÍCH HOẠT ĐÀI TẾ (SHRINES)
+        // Cập nhật Trụ Bẫy Môi Trường & Khe Nứt
+        for (let i = 0; i < this.timeRifts.length; i++) {
+            const rift = this.timeRifts[i];
+            if (rift.currentCooldown > 0) {
+                rift.currentCooldown = Math.max(0, rift.currentCooldown - safeDt);
+            }
+            if (rift.isTriggered) {
+                rift.activeTimer -= safeDt;
+                rift.shockwaveR += safeDt * 180;
+                if (rift.activeTimer <= 0) {
+                    rift.isTriggered = false;
+                    rift.shockwaveR = 0;
+                }
+            }
+
+            const dist = Math.hypot(px - rift.x, py - rift.y);
+            if (dist <= 65) {
+                if (rift.currentCooldown <= 0) {
+                    effect.zoneName = `[E] Kích hoạt ${rift.name}`;
+                } else {
+                    effect.zoneName = `${rift.name} (Hồi: ${Math.ceil(rift.currentCooldown)}s)`;
+                }
+            }
+        }
+
+        // Cập nhật Đài Tế Shrines
         for (let s = 0; s < this.shrines.length; s++) {
             const sh = this.shrines[s];
             if (sh.currentCooldown > 0) {
@@ -575,7 +999,6 @@ window.Game.World = {
                         sh.currentCooldown = sh.cooldown;
 
                         if (sh.type === 'WAR') {
-                            // Đài Chiến Thần: +25% Sát thương cận chiến & Hồi đầy 100% Khiên
                             if (window.Game.player) {
                                 window.Game.player.shield = window.Game.player.maxShield || 60;
                             }
@@ -587,7 +1010,6 @@ window.Game.World = {
                                 window.Game.Combat.spawnFloatingText(sh.x, sh.y - 45, '⚡ CHIẾN THẦN: +25% CẬN CHIẾN & ĐẦY KHIÊN!', '#fbbf24');
                             }
                         } else if (sh.type === 'ASTRAL') {
-                            // Đài Tinh Không: -30% Hồi chiêu kỹ năng trong 12s
                             if (window.Game.Combat) {
                                 window.Game.Combat.astralShrineTimer = 12.0;
                             }
@@ -609,13 +1031,12 @@ window.Game.World = {
             }
         }
 
-        // Tích hợp Buff từ Đài Tinh Không vào cdrMultiplier nếu còn hiệu lực
         if (window.Game.Combat && window.Game.Combat.astralShrineTimer > 0) {
             window.Game.Combat.astralShrineTimer = Math.max(0, window.Game.Combat.astralShrineTimer - safeDt);
-            effect.cdrMultiplier = Math.max(effect.cdrMultiplier, 1.43); // 1 / (1 - 0.3) ≈ 1.43
+            effect.cdrMultiplier = Math.max(effect.cdrMultiplier, 1.43);
         }
 
-        // 2. Dị Điểm Không-Thời Gian
+        // Dị Điểm Không-Thời Gian
         for (let i = 0; i < this.anomalies.length; i++) {
             const anom = this.anomalies[i];
             const dist = Math.hypot(px - anom.x, py - anom.y);
@@ -630,7 +1051,7 @@ window.Game.World = {
             }
         }
 
-        // 3. Cạm bẫy địa hình
+        // Cạm bẫy địa hình
         for (let i = 0; i < this.traps.length; i++) {
             const trap = this.traps[i];
             if (trap.timeline !== timeline) continue;
@@ -672,12 +1093,6 @@ window.Game.World = {
         return effect;
     },
 
-    /**
-     * LA BÀN THÔNG MINH:
-     * - Chỉ dẫn Hạt Giống, Gieo Mầm, Vượt Cầu.
-     * - Khi đã qua cầu hoặc đang săn Boss: ƯU TIÊN CHỈ HƯỚNG TỚI BOSS PHỤ (isMiniBoss) CÒN SỐNG TRONG KỶ NGUYÊN!
-     * - Nếu Boss Phụ đã diệt hết -> Chỉ hướng tới Chúa Tể Thời Không (isBoss).
-     */
     _getObjectiveTarget: function (player, state) {
         const ts = this.tileSize;
         const timeline = (state && state.timeline) || 'PRESENT';
@@ -717,7 +1132,6 @@ window.Game.World = {
 
         const enemies = this._getActiveEnemiesList();
 
-        // 1. Kiểm tra Boss Phụ (isMiniBoss) còn sống ở kỷ nguyên hiện tại
         for (let i = 0; i < enemies.length; i++) {
             const e = enemies[i];
             if (!e || e.dead || e.isDead || (typeof e.hp === 'number' && e.hp <= 0)) continue;
@@ -732,7 +1146,6 @@ window.Game.World = {
             }
         }
 
-        // 2. Kiểm tra Chúa Tể Thời Không (isBoss)
         for (let i = 0; i < enemies.length; i++) {
             const e = enemies[i];
             if (!e || e.dead || e.isDead || (typeof e.hp === 'number' && e.hp <= 0)) continue;
@@ -835,9 +1248,6 @@ window.Game.World = {
         ctx.restore();
     },
 
-    /**
-     * VẼ CỘT SÁNG RUNE 3D CHO ĐÀI TẾ (SHRINES)
-     */
     _drawShrines: function (ctx, camX, camY, camW, camH, now) {
         for (let i = 0; i < this.shrines.length; i++) {
             const sh = this.shrines[i];
@@ -858,7 +1268,6 @@ window.Game.World = {
             ctx.save();
             ctx.translate(sh.x, sh.y);
 
-            // 1. Đế đá cổ khắc ấn
             ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
             ctx.strokeStyle = mainColor;
             ctx.lineWidth = 2.5;
@@ -867,7 +1276,6 @@ window.Game.World = {
             ctx.fill();
             ctx.stroke();
 
-            // 2. Vòng Rune xoay tròn 3D
             ctx.save();
             ctx.rotate(now * 1.8);
             ctx.strokeStyle = isReady ? sh.runeColor : '#475569';
@@ -878,7 +1286,6 @@ window.Game.World = {
             ctx.stroke();
             ctx.restore();
 
-            // 3. Cột sáng Rune bốc lên trời (Hiệu ứng 3D)
             if (isReady) {
                 const beamGrad = ctx.createLinearGradient(0, 0, 0, -90);
                 beamGrad.addColorStop(0, mainColor);
@@ -896,7 +1303,6 @@ window.Game.World = {
                 ctx.globalAlpha = 1.0;
             }
 
-            // 4. Tiến trình sạc nếu người chơi đang đứng trong đài
             if (sh.stayTimer > 0) {
                 const pct = sh.stayTimer / sh.requiredTime;
                 ctx.strokeStyle = '#ffffff';
@@ -906,7 +1312,6 @@ window.Game.World = {
                 ctx.stroke();
             }
 
-            // Tên đài tế
             ctx.fillStyle = '#ffffff';
             ctx.font = 'bold 11px sans-serif';
             ctx.textAlign = 'center';
@@ -916,6 +1321,79 @@ window.Game.World = {
         }
     },
 
+    // VẼ KHE NỨT THỜI GIAN & TRỤ NĂNG LƯỢNG MÔI TRƯỜNG
+    _drawTimeRifts: function (ctx, camX, camY, camW, camH, now) {
+        for (let i = 0; i < this.timeRifts.length; i++) {
+            const rift = this.timeRifts[i];
+            const r = rift.radius;
+
+            if (
+                rift.x + r < camX ||
+                rift.x - r > camX + camW ||
+                rift.y + r < camY ||
+                rift.y - r > camY + camH
+            ) {
+                continue;
+            }
+
+            const isSlow = rift.type === 'TIME_SLOW';
+            const themeColor = isSlow ? '#38bdf8' : '#f43f5e';
+            const isReady = rift.currentCooldown <= 0;
+
+            ctx.save();
+            ctx.translate(rift.x, rift.y);
+
+            // Bán kính vùng tác dụng
+            ctx.beginPath();
+            ctx.arc(0, 0, rift.radius, 0, Math.PI * 2);
+            ctx.fillStyle = isSlow ? 'rgba(56, 189, 248, 0.06)' : 'rgba(244, 63, 94, 0.06)';
+            ctx.fill();
+            ctx.strokeStyle = isReady ? themeColor : '#475569';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([6, 6]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Sóng kích hoạt (Shockwave) nếu đang nổ/làm chậm
+            if (rift.isTriggered && rift.shockwaveR > 0) {
+                ctx.beginPath();
+                ctx.arc(0, 0, rift.shockwaveR % rift.radius, 0, Math.PI * 2);
+                ctx.strokeStyle = isSlow ? '#00f5ff' : '#ff0055';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            }
+
+            // Trụ trung tâm
+            ctx.fillStyle = '#0f172a';
+            ctx.strokeStyle = isReady ? themeColor : '#64748b';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, 22, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // Lõi xoay năng lượng
+            ctx.save();
+            ctx.rotate(now * (isSlow ? -2.5 : 3.5));
+            ctx.strokeStyle = isReady ? '#ffffff' : '#64748b';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(-10, -10, 20, 20);
+            ctx.restore();
+
+            // Hiển thị tên & nút tương tác
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            const statusText = isReady ? `[E] ${rift.name}` : `Đang nạp (${Math.ceil(rift.currentCooldown)}s)`;
+            ctx.fillText(statusText, 0, 36);
+
+            ctx.restore();
+        }
+    },
+
+    // ========================================================================
+    // MAIN DRAW FUNCTION (ÁP DỤNG OFFSCREEN CANVAS CHỈ 1 LỆNH DRAWIMAGE)
+    // ========================================================================
     draw: function (ctx, camera) {
         if (!this._initialized) this.init();
 
@@ -930,6 +1408,11 @@ window.Game.World = {
         const timeline = state.timeline || 'PRESENT';
         const ts = this.tileSize;
         const now = performance.now() * 0.001;
+
+        // Tự động xây dựng lại cache nếu có sự thay đổi cây cầu nhân quả
+        if (state.isTreePlanted !== this._lastTreePlantedState) {
+            this.rebuildAllBackgroundCaches();
+        }
 
         if (window.Game.player) {
             this._checkAutoUnlockWaypoints(window.Game.player.x, window.Game.player.y);
@@ -964,29 +1447,39 @@ window.Game.World = {
             ctx.translate(-camX, -camY);
         }
 
+        // ====================================================================
+        // 1. TỐI ƯU SIÊU CẤP: DÙNG ĐÚNG 1 LỆNH DRAWIMAGE TỪ OFFSCREEN CANVAS
+        // ====================================================================
+        const cachedBg = this._cachedBackgrounds[timeline];
+        if (cachedBg) {
+            const sx = Math.max(0, Math.min(this.width - camW, camX));
+            const sy = Math.max(0, Math.min(this.height - camH, camY));
+            const sw = Math.min(this.width - sx, camW);
+            const sh = Math.min(this.height - sy, camH);
+
+            ctx.drawImage(
+                cachedBg,
+                sx, sy, sw, sh,
+                sx, sy, sw, sh
+            );
+        }
+
         const startCol = Math.max(0, Math.floor(camX / ts) - 2);
         const endCol = Math.min(this.cols - 1, Math.ceil((camX + camW) / ts) + 2);
         const startRow = Math.max(0, Math.floor(camY / ts) - 2);
         const endRow = Math.min(this.rows - 1, Math.ceil((camY + camH) / ts) + 2);
 
-        for (let r = startRow; r <= endRow; r++) {
+        // Vẽ hiệu ứng động của vực thẳm
+        if (this.ABYSS_ROW >= startRow && this.ABYSS_ROW <= endRow) {
             for (let c = startCol; c <= endCol; c++) {
-                const wx = c * ts;
-                const wy = r * ts;
-                const decor = this.decorGrid[r][c];
-                const isNorthBossZone = r < this.ABYSS_ROW;
-
-                if (r === this.ABYSS_ROW) {
-                    this._drawAbyssTile(ctx, wx, wy, c, timeline, now);
-                } else {
-                    this._drawGroundTile(ctx, wx, wy, c, r, decor, timeline, isNorthBossZone);
-                }
+                this._drawAbyssDynamicEffect(ctx, c * ts, this.ABYSS_ROW * ts, c, timeline, now);
             }
         }
 
         this._drawTraps(ctx, camX, camY, camW, camH, timeline, now);
         this._drawAnomalies(ctx, camX, camY, camW, camH, now);
         this._drawShrines(ctx, camX, camY, camW, camH, now);
+        this._drawTimeRifts(ctx, camX, camY, camW, camH, now);
 
         if (
             this.BRIDGE_TILE.x >= startCol &&
@@ -1119,20 +1612,13 @@ window.Game.World = {
         }
     },
 
-    _drawAbyssTile: function (ctx, x, y, col, timeline, now) {
+    _drawAbyssDynamicEffect: function (ctx, x, y, col, timeline, now) {
         const ts = this.tileSize;
-
         if (timeline === 'FUTURE') {
-            ctx.fillStyle = '#030408';
-            ctx.fillRect(x, y, ts, ts);
-
             const pulse = 0.4 + 0.3 * Math.sin(now * 3 + col * 0.7);
             ctx.fillStyle = `rgba(0, 229, 255, ${pulse})`;
             ctx.fillRect(x, y + 28, ts, 8);
         } else {
-            ctx.fillStyle = '#0c0a10';
-            ctx.fillRect(x, y, ts, ts);
-
             const mist = 0.12 + 0.08 * Math.sin(now * 2 + col);
             ctx.fillStyle =
                 timeline === 'PAST'
@@ -1140,15 +1626,6 @@ window.Game.World = {
                     : `rgba(110, 180, 220, ${mist})`;
             ctx.fillRect(x, y + 18, ts, 28);
         }
-
-        ctx.fillStyle =
-            timeline === 'PAST'
-                ? '#4a321a'
-                : timeline === 'PRESENT'
-                ? '#264730'
-                : '#00d9ff';
-        ctx.fillRect(x, y, ts, 6);
-        ctx.fillRect(x, y + ts - 6, ts, 6);
     },
 
     _drawTraps: function (ctx, camX, camY, camW, camH, timeline, now) {
@@ -1856,13 +2333,9 @@ window.Game.World = {
         ctx.restore();
     },
 
-    /**
-     * VẼ BẢN ĐỒ THU NHỎ (RADAR MINIMAP):
-     * - BOSS PHỤ (isMiniBoss): Ngôi sao 4 cánh tím/vàng xoay tròn nổi bật.
-     * - ĐÀI NĂNG LƯỢNG (shrines): Chấm tròn xanh ngọc phát sáng.
-     * - BOSS CHÍNH (isBoss): Đầu lâu nhấp nháy phát sáng.
-     * - QUÁI VẬT: Tanker (Khiên cam), Kiter (Mũi tên nhọn), Quái thường (Chấm đỏ).
-     */
+    // ========================================================================
+    // MINIMAP: HIỂN THỊ QUÁI, BOSS, ĐÀI TẾ & KHE NỨT THỜI GIAN
+    // ========================================================================
     drawMinimap: function (ctx, canvasWidth, canvasHeight) {
         if (!this._initialized) this.init();
 
@@ -1891,7 +2364,6 @@ window.Game.World = {
         const centerX = mapX + mapSize / 2;
         const centerY = mapY + mapSize / 2;
 
-        // KIỂM TRA TRẠNG THÁI GIAO TRANH CHO PLAYER (Bán kính 350px)
         let combatDetected = false;
         const enemyList = this._getActiveEnemiesList();
 
@@ -1932,7 +2404,6 @@ window.Game.World = {
         ctx.save();
         ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-        // 1. Nền & Cắt vùng (Clip)
         ctx.save();
         ctx.beginPath();
         if (typeof ctx.roundRect === 'function') {
@@ -1944,7 +2415,6 @@ window.Game.World = {
         ctx.fill();
         ctx.clip();
 
-        // 2. Lưới radar đồng tâm
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
         ctx.lineWidth = 1;
         for (let g = 1; g < 4; g++) {
@@ -1963,7 +2433,6 @@ window.Game.World = {
         ctx.arc(centerX, centerY, mapSize * 0.44, 0, Math.PI * 2);
         ctx.stroke();
 
-        // 3. Đường Vực Sâu (Abyss)
         const abyssY = mapY + (this.ABYSS_ROW * this.tileSize + 32) * scaleY;
         ctx.strokeStyle = timeline === 'FUTURE' ? 'rgba(0, 229, 255, 0.7)' : 'rgba(255, 65, 65, 0.7)';
         ctx.lineWidth = isMobile ? 2 : 3;
@@ -1972,7 +2441,6 @@ window.Game.World = {
         ctx.lineTo(mapX + mapSize, abyssY);
         ctx.stroke();
 
-        // 4. Cầu Gỗ Quá Khứ & Cầu Cây Cổ Thụ
         const bridgeX = mapX + (this.BRIDGE_TILE.x * this.tileSize + 32) * scaleX;
         ctx.fillStyle = timeline === 'PAST' ? '#ffb74d' : '#64748b';
         ctx.fillRect(bridgeX - 3, abyssY - 3, 6, 6);
@@ -1986,7 +2454,6 @@ window.Game.World = {
             ctx.fillRect(treeBridgeX - 2, abyssY + 1, 4, 3);
         }
 
-        // 5. Dị Điểm Không-Thời Gian
         for (let i = 0; i < this.anomalies.length; i++) {
             const anom = this.anomalies[i];
             const ax = mapX + anom.x * scaleX;
@@ -1998,7 +2465,7 @@ window.Game.World = {
             ctx.stroke();
         }
 
-        // 6. ĐÀI NĂNG LƯỢNG (SHRINES) TRÊN RADAR: Chấm tròn xanh ngọc phát sáng
+        // ĐÀI NĂNG LƯỢNG (SHRINES)
         for (let s = 0; s < this.shrines.length; s++) {
             const sh = this.shrines[s];
             const sx = mapX + sh.x * scaleX;
@@ -2014,7 +2481,18 @@ window.Game.World = {
             ctx.stroke();
         }
 
-        // 7. Rương Nhân Quả
+        // KHE NỨT THỜI GIAN TRÊN RADAR
+        for (let rf = 0; rf < this.timeRifts.length; rf++) {
+            const rift = this.timeRifts[rf];
+            const rx = mapX + rift.x * scaleX;
+            const ry = mapY + rift.y * scaleY;
+
+            ctx.fillStyle = rift.type === 'TIME_SLOW' ? '#38bdf8' : '#f43f5e';
+            ctx.beginPath();
+            ctx.arc(rx, ry, isMobile ? 2.8 : 3.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
         const chestMX = mapX + (this.CHEST_TILE.x * this.tileSize + 32) * scaleX;
         const chestMY = mapY + (this.CHEST_TILE.y * this.tileSize + 32) * scaleY;
         ctx.fillStyle = state.chestOpened ? '#64748b' : state.chestOiled ? '#fde047' : '#f97316';
@@ -2025,7 +2503,6 @@ window.Game.World = {
             ctx.strokeRect(chestMX - 2.5, chestMY - 2.5, 5, 5);
         }
 
-        // 8. Cổng Dịch Chuyển (Waypoints)
         const unlockedList = state.unlockedWaypoints || [true, false, false];
         for (let i = 0; i < this.waypoints.length; i++) {
             const wp = this.waypoints[i];
@@ -2043,7 +2520,7 @@ window.Game.World = {
             ctx.fill();
         }
 
-        // 9. BIỂU TƯỢNG PHÂN HÓA QUÁI VẬT TRÊN MINIMAP
+        // BIỂU TƯỢNG PHÂN HÓA QUÁI VẬT
         for (let i = 0; i < enemyList.length; i++) {
             const e = enemyList[i];
             if (!e || e.dead || e.isDead || (typeof e.hp === 'number' && e.hp <= 0)) continue;
@@ -2057,7 +2534,6 @@ window.Game.World = {
             const isElite = !isBoss && !isMiniBoss && !!(e.isElite || e.type === 'ELITE' || e.rank === 'ELITE' || (e.maxHp && e.maxHp >= 260));
 
             if (isBoss) {
-                // CHÚA TỂ THỜI KHÔNG: Vòng nhấp nháy phát sáng cực đại
                 const bossPulse = (isMobile ? 3.8 : 4.8) + Math.sin(now * 8) * 1.4;
                 ctx.fillStyle = Math.floor(now * 6) % 2 === 0 ? '#ff1744' : '#d500f9';
                 ctx.beginPath();
@@ -2067,7 +2543,6 @@ window.Game.World = {
                 ctx.lineWidth = 1.2;
                 ctx.stroke();
             } else if (isMiniBoss) {
-                // BOSS PHỤ KỶ NGUYÊN: Biểu tượng NGÔI SAO 4 CÁNH TÍM / VÀNG XOAY TRÒN NỔI BẬT
                 ctx.save();
                 ctx.translate(ex, ey);
                 ctx.rotate(now * 2.5);
@@ -2092,7 +2567,6 @@ window.Game.World = {
 
                 ctx.restore();
             } else if (e.isTanker || e.role === 'tanker' || e.subType === 'golem' || e.subType === 'shield_robot') {
-                // QUÁI TANKER: Biểu tượng Khối Khiên nhỏ màu cam đậm viền vàng
                 const sw = isMobile ? 3.2 : 4.0;
                 const sh = isMobile ? 4.0 : 5.0;
 
@@ -2113,7 +2587,6 @@ window.Game.World = {
                 ctx.stroke();
                 ctx.restore();
             } else if (e.isKiter || e.role === 'kiter' || e.subType === 'shaman' || e.subType === 'sniper_robot') {
-                // QUÁI ĐÁNH XA (KITER): Mũi Tên Đỏ/Vàng
                 const arrowAngle = typeof e.facingAngle === 'number' ? e.facingAngle : 0;
                 const arrowSize = isMobile ? 3.5 : 4.5;
 
@@ -2134,13 +2607,11 @@ window.Game.World = {
                 ctx.stroke();
                 ctx.restore();
             } else if (isElite) {
-                // QUÁI TINH ANH
                 ctx.fillStyle = '#ff9100';
                 ctx.beginPath();
                 ctx.arc(ex, ey, isMobile ? 2.8 : 3.5, 0, Math.PI * 2);
                 ctx.fill();
             } else {
-                // QUÁI THƯỜNG
                 ctx.fillStyle = '#ff3b30';
                 ctx.beginPath();
                 ctx.arc(ex, ey, isMobile ? 1.9 : 2.3, 0, Math.PI * 2);
@@ -2148,7 +2619,7 @@ window.Game.World = {
             }
         }
 
-        // 10. Kim cương chỉ mục tiêu Nhiệm vụ
+        // Kim cương chỉ mục tiêu Nhiệm vụ
         if (player) {
             const target = this._getObjectiveTarget(player, state);
             if (target) {
@@ -2173,7 +2644,7 @@ window.Game.World = {
             }
         }
 
-        // 11. Người chơi
+        // Người chơi
         let playerTileX = 30;
         let playerTileY = 30;
         if (player) {
@@ -2221,7 +2692,7 @@ window.Game.World = {
             ctx.stroke();
         }
 
-        // 12. Tia quét Radar Quân Sự
+        // Quét Radar Quân Sự
         const sweepAngle = (now * 1.65) % (Math.PI * 2);
         const sweepRadius = mapSize * 0.72;
 
@@ -2256,7 +2727,7 @@ window.Game.World = {
         ctx.stroke();
         ctx.restore();
 
-        // 13. Thanh tiêu đề & Tọa độ
+        // Thanh thông số
         const barH = isMobile ? 16 : 20;
         const barY = mapY + mapSize - barH;
         ctx.fillStyle = 'rgba(4, 8, 18, 0.82)';
@@ -2290,7 +2761,7 @@ window.Game.World = {
 
         ctx.restore();
 
-        // 14. Khung viền phát sáng & Chốt góc quân sự
+        // Viền radar
         ctx.save();
         ctx.strokeStyle = themeColor;
         ctx.lineWidth = isMobile ? 1.8 : 2.2;
@@ -2348,5 +2819,134 @@ window.Game.World = {
         }
 
         return list;
+    
+},
+// ========================================================================
+    // TÍNH NĂNG 4: HỆ THỐNG TIỆN ÍCH KIỂM TRA VA CHẠM DỰA TRÊN SPATIAL GRID
+    // ========================================================================
+
+    /**
+     * Kiểm tra va chạm tia/đoạn thẳng từ (x1, y1) đến (x2, y2) với các chướng ngại vật tĩnh
+     * Trả về true nếu đường đi bị chặn bởi tường/đá
+     */
+    checkRaycastBlocked: function (x1, y1, x2, y2, stepSize = 16) {
+        if (!this._initialized) this.init();
+
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const dist = Math.hypot(dx, dy);
+        if (dist === 0) return false;
+
+        const steps = Math.ceil(dist / stepSize);
+        const stepX = dx / steps;
+        const stepY = dy / steps;
+
+        for (let i = 1; i <= steps; i++) {
+            const cx = x1 + stepX * i;
+            const cy = y1 + stepY * i;
+            const tx = Math.floor(cx / this.tileSize);
+            const ty = Math.floor(cy / this.tileSize);
+
+            if (!this._isTileWalkable(tx, ty)) {
+                return true;
+            }
+        }
+        return false;
+    },
+
+    /**
+     * Quét nhanh các va chạm giữa đạn người chơi và quái vật thông qua Lưới Không Gian
+     * Gọi trong Combat/Projectile update loop để loại bỏ O(N*M)
+     */
+    resolveProjectileCollisions: function (projectiles, onHitCallback) {
+        if (!this.spatialGrid || !Array.isArray(projectiles)) return;
+
+        for (let i = 0; i < projectiles.length; i++) {
+            const p = projectiles[i];
+            if (!p || p.dead) continue;
+
+            const pRadius = p.radius || 6;
+            // Chỉ truy vấn ô chứa viên đạn
+            const neighbors = this.spatialGrid.queryRadius(p.x, p.y, pRadius + 20);
+
+            for (let j = 0; j < neighbors.length; j++) {
+                const neighbor = neighbors[j];
+
+                // 1. Va chạm đạn với vật cản tĩnh
+                if (neighbor.type === 'OBSTACLE') {
+                    const distSq = (p.x - neighbor.x) ** 2 + (p.y - neighbor.y) ** 2;
+                    const combinedR = pRadius + neighbor.radius;
+                    if (distSq <= combinedR * combinedR) {
+                        p.dead = true;
+                        if (typeof onHitCallback === 'function') {
+                            onHitCallback(p, neighbor, 'OBSTACLE');
+                        }
+                        break;
+                    }
+                }
+
+                // 2. Va chạm đạn với Quái vật
+                if (neighbor.type === 'ENEMY' && p.isPlayerBullet) {
+                    const enemy = neighbor.raw;
+                    if (!enemy || enemy.dead || enemy.isDead) continue;
+
+                    const enemyR = neighbor.radius || 20;
+                    const distSq = (p.x - neighbor.x) ** 2 + (p.y - neighbor.y) ** 2;
+                    const combinedR = pRadius + enemyR;
+
+                    if (distSq <= combinedR * combinedR) {
+                        p.dead = true;
+                        if (typeof onHitCallback === 'function') {
+                            onHitCallback(p, enemy, 'ENEMY');
+                        }
+                        break;
+                    }
+                }
+
+                // 3. Đạn bắn trúng Khe nứt/Trụ năng lượng thời gian để kích hoạt từ xa
+                if (neighbor.type === 'TIME_RIFT') {
+                    const rift = neighbor.raw;
+                    const distSq = (p.x - rift.x) ** 2 + (p.y - rift.y) ** 2;
+                    const combinedR = pRadius + 28;
+
+                    if (distSq <= combinedR * combinedR) {
+                        p.dead = true;
+                        this.triggerTimeRift(rift.id);
+                        if (typeof onHitCallback === 'function') {
+                            onHitCallback(p, rift, 'TIME_RIFT');
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    },
+
+    /**
+     * Kích hoạt đài tế thủ công từ phím bấm hoặc tương tác UI
+     */
+    activateShrine: function (shrineId) {
+        const sh = this.shrines.find(s => s.id === shrineId);
+        if (!sh || sh.currentCooldown > 0) return false;
+
+        sh.stayTimer = sh.requiredTime;
+        return true;
+    },
+
+    /**
+     * Dọn dẹp bộ nhớ đệm canvas khi thoát game hoặc khởi động lại
+     */
+    destroy: function () {
+        this._cachedBackgrounds.PAST = null;
+        this._cachedBackgrounds.PRESENT = null;
+        this._cachedBackgrounds.FUTURE = null;
+        if (this.spatialGrid) {
+            this.spatialGrid.clear();
+        }
+        this.traps = [];
+        this.weatherParticles = [];
+        this.grid = [];
+        this.decorGrid = [];
+        this._initialized = false;
     }
 };

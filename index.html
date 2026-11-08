@@ -18,7 +18,7 @@
 
   <link rel="stylesheet" href="style.css">
   <link rel="shortcut icon" href="data:image/x-icon;," type="image/x-icon">
-<link rel="icon" type="image/jpeg" href="./chem_2.jpg">
+  <link rel="icon" type="image/jpeg" href="./chem_2.jpg">
 </head>
 <body>
 
@@ -68,9 +68,21 @@
       </div>
     </div>
 
-    <!-- 3. GÓC TRÊN PHẢI: CỤM NÚT GỌN GÀNG & MENU THU GỌN -->
+    <!-- 3. GÓC TRÊN PHẢI: CỤM NÚT GỌN GÀNG, HỆ THỐNG NÚT QUẢN TRỊ & MENU THU GỌN -->
     <div class="hud-top-right secondary-hud-widget">
       <div class="top-right-main-row">
+        <!-- NÚT BẬT/TẮT ĐỒ HỌA THẤP (CHỐNG LAG MOBILE) -->
+        <button type="button" id="btn-low-graphics" class="glass-panel icon-action-btn" onclick="Game.UI.toggleLowGraphics()" title="Bật/Tắt Chế độ Đồ họa Thấp để mượt hơn">
+          <span class="btn-icon">⚡</span>
+          <span id="lbl-low-graphics" class="shop-label">MƯỢT: TẮT</span>
+        </button>
+
+        <!-- NÚT ADMIN PANEL (ẨN MẶC ĐỊNH, CHỈ HIỆN KHI LÀ TÀI KHOẢN ADMIN) -->
+        <button type="button" id="btn-open-admin-panel" class="glass-panel icon-action-btn hidden" onclick="Game.UI.toggleAdminPanel(true)" title="Mở Bảng Điều Khiển Quản Trị Viên">
+          <span class="btn-icon">🛡️</span>
+          <span class="shop-label">ADMIN</span>
+        </button>
+
         <button type="button" id="btn-open-char-modal" class="glass-panel icon-action-btn" onclick="Game.UI.toggleCharModal(true)" title="Đổi Nhân Vật">
           <span class="btn-icon">🦸</span>
           <span class="shop-label">NHÂN VẬT</span>
@@ -84,6 +96,12 @@
         <button type="button" id="btn-shop" class="glass-panel shop-trigger-btn" onclick="Game.Systems.toggleShop()">
           <span class="shop-icon">🛒</span>
           <span class="shop-label">CỬA HÀNG</span>
+        </button>
+
+        <!-- NÚT ĐĂNG XUẤT (LOGOUT) TRÊN HUD -->
+        <button type="button" id="btn-hud-logout" class="glass-panel icon-action-btn" onclick="if(Game.Systems.logout) Game.Systems.logout(); else location.reload();" title="Đăng Xuất Tài Khoản">
+          <span class="btn-icon">🚪</span>
+          <span class="shop-label">ĐĂNG XUẤT</span>
         </button>
 
         <button type="button" id="btn-compact-menu" class="glass-panel compact-menu-trigger" onclick="Game.UI.toggleCompactDrawer()" aria-label="Menu Thu Gọn" title="Mở bảng Thông tin, Nhiệm vụ & Dịch chuyển">
@@ -184,14 +202,59 @@
     <!-- 6. ẨN LỚP NÚT HTML TRÙNG LẶP ĐỂ DÙNG HỆ THỐNG NÚT VẼ TRÊN CANVAS CỦA CONTROLS.JS -->
     <div id="combat-controls-layer" class="combat-controls-layer hidden"></div>
 
-    <!-- 7. BẢNG ĐIỀU KHIỂN QUẢN TRỊ VIÊN ADMIN SIÊU CẤP (#admin-panel) -->
+    <!-- 7. BẢNG ĐIỀU KHIỂN QUẢN TRỊ VIÊN ADMIN (#admin-panel) -->
     <div id="admin-panel" class="glass-panel admin-hud-panel hidden">
       <div class="admin-header">
         <span class="admin-title">⚡ QUẢN TRỊ THỜI KHÔNG (ADMIN V2)</span>
-        <button type="button" class="btn-close-admin" onclick="document.getElementById('admin-panel').classList.add('hidden')">✕</button>
+        <button type="button" class="btn-close-admin" onclick="Game.UI.toggleAdminPanel(false)">✕</button>
       </div>
 
-      <!-- KHU VỰC ĐIỀU CHỈNH MỌI CHỈ SỐ TÙY Ý -->
+      <!-- KHU VỰC 1: GIÁM SÁT REALTIME SERVER & NGƯỜI CHƠI ONLINE -->
+      <div class="admin-server-section" style="display: block; margin-bottom: 15px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <h4 class="admin-section-title" style="margin: 0;">🌐 NGƯỜI CHƠI ONLINE TRỰC TUYẾN</h4>
+          <span style="background: rgba(0, 255, 170, 0.2); border: 1px solid #00ffaa; color: #00ffaa; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+            🟢 Trực tuyến: <span id="admin-online-count">0</span>
+          </span>
+        </div>
+
+        <div class="admin-player-table-wrapper" style="max-height: 160px; overflow-y: auto;">
+          <table class="admin-player-table" style="width: 100%; border-collapse: collapse; font-size: 12px;">
+            <thead>
+              <tr style="background: rgba(255, 255, 255, 0.08); text-align: left;">
+                <th style="padding: 6px;">Tên Người Chơi</th>
+                <th style="padding: 6px;">Cấp Độ</th>
+                <th style="padding: 6px;">Kỷ Nguyên</th>
+                <th style="padding: 6px;">Hoạt Động Cuối</th>
+                <th style="padding: 6px;">Thao Tác</th>
+              </tr>
+            </thead>
+            <tbody id="server-players-tbody">
+              <tr>
+                <td colspan="5" class="text-center" style="text-align: center; color: #a0aec0; padding: 10px;">Đang đồng bộ dữ liệu Realtime...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Form gửi quà từ xa cho người chơi -->
+        <div class="admin-gift-sender" style="margin-top: 10px;">
+          <h5 class="admin-sub-title" style="margin-bottom: 6px;">🎁 GỬI QUÀ THỜI KHÔNG TỪ XA</h5>
+          <div class="admin-gift-inputs" style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <input type="text" id="gift-target-uid" placeholder="Nhập Username/UID..." autocomplete="off" style="flex: 1; min-width: 120px;">
+            <input type="number" id="gift-amount-gold" placeholder="Vàng (🪙)" min="0" step="100" style="width: 90px;">
+            <input type="number" id="gift-amount-shard" placeholder="Mảnh (💎)" min="0" step="10" style="width: 90px;">
+            <button type="button" class="btn-stat-set btn-send-gift" onclick="if(Game.Systems.adminSendGift) Game.Systems.adminSendGift();">
+              Gửi Quà
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <hr class="admin-divider" style="border: 0; border-top: 1px solid rgba(255, 255, 255, 0.15); margin: 12px 0;">
+
+      <!-- KHU VỰC 2: ĐIỀU CHỈNH CHỈ SỐ NHÂN VẬT -->
+      <h4 class="admin-section-title" style="margin-top: 0;">🛠️ ĐIỀU CHỈNH CHỈ SỐ</h4>
       <div class="admin-stats-box">
         <div class="admin-stat-row">
           <span>❤️ Máu tối đa:</span>
@@ -215,7 +278,7 @@
         </div>
       </div>
 
-      <!-- KHU VỰC CÁC NÚT QUYỀN NĂNG ADMIN -->
+      <!-- KHU VỰC 3: PHÍM TẮT QUYỀN NĂNG -->
       <div class="admin-grid">
         <button type="button" class="btn-admin btn-god" onclick="Game.Systems.adminAction('god')">
           🛡️ Bất Tử (God Mode)
@@ -224,56 +287,17 @@
           💰 +100.000 Vàng &amp; +100 💎
         </button>
         <button type="button" class="btn-admin btn-weapon" onclick="Game.Systems.adminAction('add99Weapon')">
-          ⚔️ Cộng +99 Lv Vũ Khí (Lv Vô Hạn)
+          ⚔️ Cộng +99 Lv Vũ Khí
         </button>
         <button type="button" class="btn-admin btn-nocd" onclick="Game.Systems.adminAction('noCd')">
-          ⚡ Xóa Hồi Chiêu (No CD)
+          ⚡ Xóa Hồi Chiêu
         </button>
         <button type="button" class="btn-admin btn-kill" onclick="Game.Systems.adminAction('killAll')">
           💀 Diệt Sạch Quái &amp; Boss
         </button>
         <button type="button" class="btn-admin btn-loop" onclick="Game.Systems.adminAction('nextLoop')">
-          🌀 Sang Chu Kỳ Tiếp Theo
+          🌀 Sang Chu Kỳ Mới
         </button>
-      </div>
-
-      <!-- KHU VỰC MỚI: QUẢN LÝ SERVER TRÊN ADMIN (CHỈ DÀNH CHO ADMIN BAO2010) -->
-      <div id="admin-server-management" class="admin-server-section hidden">
-        <hr class="admin-divider">
-        <h4 class="admin-section-title">🌐 QUẢN LÝ PLAYER TRÊN SERVER</h4>
-        
-        <!-- Bảng danh sách người chơi trực tuyến/offline -->
-        <div class="admin-player-table-wrapper">
-          <table class="admin-player-table">
-            <thead>
-              <tr>
-                <th>UID</th>
-                <th>Tên Người Chơi</th>
-                <th>Trạng Thái</th>
-                <th>Hành Động</th>
-              </tr>
-            </thead>
-            <tbody id="server-players-tbody">
-              <!-- Render động danh sách player từ Firebase -->
-              <tr>
-                <td colspan="4" class="text-center" style="text-align: center; color: #a0aec0; padding: 10px;">Đang tải danh sách người chơi...</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <!-- Form gửi quà từ xa cho người chơi -->
-        <div class="admin-gift-sender">
-          <h5 class="admin-sub-title">🎁 GỬI QUÀ THỜI KHÔNG TỪ XA</h5>
-          <div class="admin-gift-inputs">
-            <input type="text" id="gift-target-uid" placeholder="Nhập UID Player nhận quà..." autocomplete="off">
-            <input type="number" id="gift-amount-gold" placeholder="Số Vàng (🪙)" min="0" step="100">
-            <input type="number" id="gift-amount-shard" placeholder="Số Mảnh (💎)" min="0" step="10">
-            <button type="button" class="btn-stat-set btn-send-gift" onclick="if(Game.Systems.adminSendGift) Game.Systems.adminSendGift()">
-              🎁 Gửi Quà Ngay
-            </button>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -282,7 +306,7 @@
       Nhấn <strong>[E]</strong> hoặc chạm để tương tác
     </div>
 
-    <!-- 9. MODAL CHỌN NHÂN VẬT (#character-select-modal) -->
+    <!-- 8. MODAL CHỌN NHÂN VẬT (#character-select-modal) -->
     <div id="character-select-modal" class="modal-backdrop hidden">
       <div class="glass-panel character-modal-container">
         <div class="pause-status-banner">
@@ -306,7 +330,7 @@
       </div>
     </div>
 
-    <!-- 10. GIỮA MÀN HÌNH: BẢNG CỬA HÀNG & KHO ĐỒ (#shop-modal) -->
+    <!-- 9. BẢNG CỬA HÀNG & KHO ĐỒ (#shop-modal) -->
     <div id="shop-modal" class="modal-backdrop hidden">
       <div class="glass-panel shop-container">
         <div class="pause-status-banner">
@@ -324,7 +348,7 @@
         </div>
 
         <div class="shop-body">
-          <!-- KHU VỰC 1: DANH SÁCH 5 VŨ KHÍ & CƯỜNG HÓA -->
+          <!-- KHU VỰC 1: DANH SÁCH VŨ KHÍ & CƯỜNG HÓA -->
           <div class="shop-section">
             <h3 class="section-heading">KHO VŨ KHÍ &amp; CƯỜNG HÓA (+12% SÁT THƯƠNG / CẤP)</h3>
             <div class="weapon-grid">
@@ -563,7 +587,7 @@
                 </button>
               </div>
 
-              <!-- CỔ VẬT 4 MỚI: LÕI LÀM MÁT LƯỢNG TỬ -->
+              <!-- CỔ VẬT 4: LÕI LÀM MÁT LƯỢNG TỬ -->
               <div class="upgrade-card">
                 <div class="upgrade-info">
                   <span class="upgrade-icon">❄️</span>
@@ -577,7 +601,7 @@
                 </button>
               </div>
 
-              <!-- CỔ VẬT 5 MỚI: ẤN KÝ ÁM SÁT -->
+              <!-- CỔ VẬT 5: ẤN KÝ ÁM SÁT -->
               <div class="upgrade-card">
                 <div class="upgrade-info">
                   <span class="upgrade-icon">🗡️</span>
@@ -618,7 +642,7 @@
       </div>
     </div>
 
-    <!-- 11. MODAL NHẬP GIFTCODE (#giftcode-modal) -->
+    <!-- 10. MODAL NHẬP GIFTCODE (#giftcode-modal) -->
     <div id="giftcode-modal" class="modal-backdrop giftcode-backdrop hidden">
       <div class="glass-panel giftcode-container">
         <div class="pause-status-banner">
@@ -659,18 +683,18 @@
       </div>
     </div>
 
-    <!-- 12. MODAL ĐĂNG NHẬP HỆ THỐNG (#auth-modal) - HIỂN THỊ MẶC ĐỊNH -->
+    <!-- 11. THIẾT KẾ LẠI MODAL ĐĂNG NHẬP / ĐĂNG KÝ HỆ THỐNG (#auth-modal) -->
     <div id="auth-modal" class="modal-backdrop auth-backdrop">
-      <div class="glass-panel auth-container">
+      <div class="glass-panel auth-container" style="max-width: 380px; width: 90%; margin: auto; padding: 24px; box-sizing: border-box; text-align: center;">
         <div class="auth-header">
-          <span class="auth-icon">🚀</span>
-          <h2>ĐĂNG NHẬP THỜI KHÔNG</h2>
-          <p class="auth-subtitle">Kết nối với máy chủ thời không đa vũ trụ</p>
+          <span class="auth-icon" style="font-size: 38px;">🚀</span>
+          <h2 style="margin: 8px 0 4px 0; color: #fff; text-shadow: 0 0 10px rgba(0, 242, 254, 0.6);">THỜI KHÔNG VŨ TRỤ</h2>
+          <p class="auth-subtitle" style="margin: 0 0 16px 0; font-size: 13px; color: #a0aec0;">Đăng nhập hoặc đăng ký tài khoản du hành</p>
         </div>
 
-        <form class="auth-form" onsubmit="event.preventDefault(); if(Game.Systems.login) Game.Systems.login();">
+        <form class="auth-form" onsubmit="event.preventDefault();" style="display: flex; flex-direction: column; gap: 12px; text-align: left;">
           <div class="auth-input-group">
-            <label for="auth-username">Tài khoản:</label>
+            <label for="auth-username" style="display: block; font-size: 13px; margin-bottom: 4px; color: #cbd5e0;">Tên đăng nhập:</label>
             <input 
               type="text" 
               id="auth-username" 
@@ -678,11 +702,12 @@
               placeholder="Nhập tên đăng nhập..." 
               required 
               autocomplete="username"
+              style="width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.4); color: #fff; font-size: 14px;"
             >
           </div>
 
           <div class="auth-input-group">
-            <label for="auth-password">Mật khẩu:</label>
+            <label for="auth-password" style="display: block; font-size: 13px; margin-bottom: 4px; color: #cbd5e0;">Mật khẩu:</label>
             <input 
               type="password" 
               id="auth-password" 
@@ -690,27 +715,48 @@
               placeholder="Nhập mật khẩu..." 
               required 
               autocomplete="current-password"
+              style="width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.4); color: #fff; font-size: 14px;"
             >
           </div>
 
-          <div class="auth-security-note">
-            <span class="shield-warn-icon">⚠️</span>
-            <span>Hệ thống bảo mật mới: Đã thu hồi toàn bộ quyền Admin cũ. Chỉ tài khoản Quản Trị Viên mới có quyền Admin.</span>
-          </div>
+          <!-- DÒNG THÔNG BÁO LỖI MÀU ĐỎ -->
+          <div id="auth-error-msg" style="color: #ff4d4f; font-size: 13px; min-height: 18px; text-align: center; font-weight: bold;"></div>
 
-          <div class="auth-actions">
-            <button type="submit" id="btn-auth-login" class="btn-action btn-auth-primary">
+          <div class="auth-actions" style="display: flex; gap: 10px; margin-top: 6px;">
+            <button 
+              type="button" 
+              id="btn-auth-login" 
+              class="btn-action btn-auth-primary" 
+              onclick="if(Game.Systems.login) Game.Systems.login();" 
+              style="flex: 1; padding: 10px; font-weight: bold; background: linear-gradient(135deg, #00f2fe, #4facfe); border: none; border-radius: 8px; color: #050811; cursor: pointer;"
+            >
               🔑 Đăng Nhập
             </button>
-            <button type="button" id="btn-auth-guest" class="btn-action btn-auth-secondary" onclick="if(Game.Systems.loginAsGuest) Game.Systems.loginAsGuest();">
-              👤 Chơi Khách / Đăng xuất
+            <button 
+              type="button" 
+              id="btn-auth-register" 
+              class="btn-action" 
+              onclick="if(Game.Systems.register) Game.Systems.register();" 
+              style="flex: 1; padding: 10px; font-weight: bold; background: linear-gradient(135deg, #43e97b, #38f9d7); border: none; border-radius: 8px; color: #050811; cursor: pointer;"
+            >
+              📝 Đăng Ký
             </button>
           </div>
+
+          <button 
+            type="button" 
+            id="btn-auth-guest" 
+            class="btn-action btn-auth-secondary" 
+            onclick="if(Game.Systems.loginAsGuest) Game.Systems.loginAsGuest();"
+            style="width: 100%; margin-top: 4px; padding: 8px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #e2e8f0; cursor: pointer;"
+          >
+            👤 Chơi Ẩn Danh (Khách)
+          </button>
         </form>
       </div>
     </div>
 
-    <!-- 13. MÀN HÌNH KHÓA TÀI KHOẢN (#banned-overlay) - MẶC ĐỊNH ẨN -->
+    <!-- 12. MÀN HÌNH KHÓA TÀI KHOẢN (#banned-overlay) -->
     <div id="banned-overlay" class="banned-overlay-screen hidden">
       <div class="banned-box">
         <div class="banned-danger-icon">🚫</div>
@@ -737,6 +783,8 @@
       World: {}, Controls: {}, Combat: {}, Enemies: {}, Systems: {}, Audio: {},
 
       UI: {
+        isLowGraphics: false,
+
         init() {
           this.renderCharacters();
         },
@@ -773,6 +821,46 @@
           modal.classList.toggle('hidden', !shouldShow);
           Game.state.isPaused = shouldShow;
           if (shouldShow) this.renderCharacters();
+        },
+
+        toggleAdminPanel(show) {
+          const modal = document.getElementById('admin-panel');
+          if (!modal) return;
+          const shouldShow = typeof show === 'boolean' ? show : modal.classList.contains('hidden');
+          modal.classList.toggle('hidden', !shouldShow);
+          if (shouldShow && Game.Systems && typeof Game.Systems.adminFetchUsers === 'function') {
+            Game.Systems.adminFetchUsers();
+          }
+        },
+
+        toggleLowGraphics() {
+          this.isLowGraphics = !this.isLowGraphics;
+          if (Game.state) {
+            Game.state.lowGraphics = this.isLowGraphics;
+          }
+          const lbl = document.getElementById('lbl-low-graphics');
+          const btn = document.getElementById('btn-low-graphics');
+          if (lbl) {
+            lbl.textContent = this.isLowGraphics ? 'MƯỢT: BẬT' : 'MƯỢT: TẮT';
+          }
+          if (btn) {
+            btn.style.borderColor = this.isLowGraphics ? '#00ffaa' : '';
+            btn.style.color = this.isLowGraphics ? '#00ffaa' : '';
+          }
+        },
+
+        setAuthError(message) {
+          const errEl = document.getElementById('auth-error-msg');
+          if (errEl) {
+            errEl.textContent = message || '';
+          }
+        },
+
+        setAdminButtonVisible(visible) {
+          const btn = document.getElementById('btn-open-admin-panel');
+          if (btn) {
+            btn.classList.toggle('hidden', !visible);
+          }
         },
 
         renderCharacters() {
