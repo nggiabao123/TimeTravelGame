@@ -1,2952 +1,2526 @@
 /**
- * FILE: world.js (BẢN SIÊU CẤP ĐẠI TU CÔNG NGHỆ: OFFSCREEN CANVAS, SPATIAL HASH GRID & TIME RIFTS)
- * KẺ DU HÀNH THỜI KHÔNG
- * 
- * NÂNG CẤP KỸ THUẬT & TÍNH NĂNG:
- * 1. OFFSCREEN CANVAS CACHING: Render trước toàn bộ nền tĩnh (mặt đất, vực sâu, chi tiết gạch) ra Canvas phụ
- *    theo từng kỷ nguyên. Main loop chỉ gọi đúng 1 lệnh ctx.drawImage trích xuất khung nhìn Camera.
- * 2. SPATIAL HASH GRID (128x128): Cấu trúc chia ô không gian tối ưu va chạm cực nhanh giữa Đạn, Quái & Địa hình.
- * 3. KHE NỨT THỜI GIAN & TRỤ MÔI TRƯỜNG (TIME RIFTS & ENVIRONMENTAL TRAPS): Trụ năng lượng thời gian kích hoạt 
- *    sóng làm chậm (Slow Pulse AoE) hoặc gây nổ phản vật chất dọn quái diện rộng khi tương tác/nhận sát thương.
- * 4. BẢO TỒN NGUYÊN VẸN 100% CƠ CHẾ CŨ: Nhân quả thời gian, radar Minimap phân loại quái, la bàn thông minh,
- *    Đài Chiến Thần & Đài Tinh Không.
+ * ============================================================================
+ * GAME: KẺ DU HÀNH THỜI KHÔNG (TIME TRAVELER ACTION RPG)
+ * FILE: world.js - BẢN ĐỒ, KHÔNG GIAN SPATIAL HASH & CÁC CƠ CHẾ THỜI KHÔNG
+ * PHIÊN BẢN: V.8 - ULTRA ENGINE UPDATE (PHẦN 1/2)
+ * ============================================================================
  */
 
-window.Game = window.Game || {};
+(function () {
+    "use strict";
 
-// ============================================================================
-// MODULE 1: SPATIAL HASH GRID (128 x 128 px)
-// ============================================================================
-class SpatialHashGrid {
-    constructor(cellSize = 128) {
-        this.cellSize = cellSize;
-        this.cells = new Map();
-        this._queryId = 0;
-    }
+    // Khởi tạo namespace toàn cục
+    window.Game = window.Game || {};
+    window.Game.state = window.Game.state || {};
 
-    clear() {
-        this.cells.clear();
-    }
+    /* ========================================================================== */
+    /* 1. HẰNG SỐ CẤU HÌNH BẢN ĐỒ & KHÔNG GIAN THỜI GIAN                           */
+    /* ========================================================================== */
+    const WORLD_CONSTANTS = {
+        WIDTH: 4096,
+        HEIGHT: 4096,
+        TILE_SIZE: 64,
+        GRID_CELL_SIZE: 128,
+        
+        ERAS: {
+            PAST: "PAST",
+            PRESENT: "PRESENT",
+            FUTURE: "FUTURE"
+        },
 
-    _getKey(cx, cy) {
-        return `${cx},${cy}`;
-    }
+        TERRAIN_TYPES: {
+            VOID: 0,
+            GRASS: 1,
+            STONE_PATH: 2,
+            WATER: 3,
+            ANCIENT_RUINS: 4,
+            CURSED_SOIL: 5,
+            CYBER_TILE: 6,
+            LAVA: 7,
+            HEALING_WATER: 8,
+            ZERO_G_GROUND: 9
+        },
 
-    _getCellCoords(x, y) {
-        return {
-            cx: Math.floor(x / this.cellSize),
-            cy: Math.floor(y / this.cellSize)
-        };
-    }
+        SHRINE_TYPES: {
+            WAR: "SHRINE_WAR",
+            IMMORTALITY: "SHRINE_IMMORTALITY",
+            SPACE: "SHRINE_SPACE"
+        },
 
-    insert(entity) {
-        if (!entity || typeof entity.x !== 'number' || typeof entity.y !== 'number') return;
-        const radius = entity.radius || entity.r || 16;
-        const minX = Math.floor((entity.x - radius) / this.cellSize);
-        const maxX = Math.floor((entity.x + radius) / this.cellSize);
-        const minY = Math.floor((entity.y - radius) / this.cellSize);
-        const maxY = Math.floor((entity.y + radius) / this.cellSize);
-
-        entity._gridCells = [];
-
-        for (let cy = minY; cy <= maxY; cy++) {
-            for (let cx = minX; cx <= maxX; cx++) {
-                const key = this._getKey(cx, cy);
-                let cell = this.cells.get(key);
-                if (!cell) {
-                    cell = [];
-                    this.cells.set(key, cell);
-                }
-                cell.push(entity);
-                entity._gridCells.push(key);
-            }
+        INTERACTION_RADIUS: 85,
+        INTERACTION_CHANNEL_TIME: 1.5,
+        SHRINE_COOLDOWN: 45.0,
+        PORTAL_COOLDOWN: 6.0,
+        TURRET_REPAIR_COST: 150,
+        
+        WEATHER_TYPES: {
+            CLEAR: 0,
+            TEMPORAL_RAIN: 1,
+            ENERGY_STORM: 2,
+            ASH_FALL: 3
         }
-    }
+    };
 
-    remove(entity) {
-        if (!entity || !entity._gridCells) return;
-        for (let i = 0; i < entity._gridCells.length; i++) {
-            const key = entity._gridCells[i];
-            const cell = this.cells.get(key);
-            if (cell) {
-                const idx = cell.indexOf(entity);
-                if (idx !== -1) {
-                    cell.splice(idx, 1);
-                }
-                if (cell.length === 0) {
-                    this.cells.delete(key);
+    /* ========================================================================== */
+    /* 2. SPATIAL HASH GRID (128x128 TỐC ĐỘ CAO CHO THIẾT BỊ DI ĐỘNG & 120HZ)     */
+    /* ========================================================================== */
+    class SpatialHashGrid {
+        constructor(width, height, cellSize = 128) {
+            this.width = width;
+            this.height = height;
+            this.cellSize = cellSize;
+            this.cols = Math.ceil(width / cellSize);
+            this.rows = Math.ceil(height / cellSize);
+            this.cells = new Map();
+            this.entityCellMap = new Map();
+        }
+
+        _hash(cellX, cellY) {
+            return cellX + cellY * this.cols;
+        }
+
+        _getCellCoords(x, y) {
+            const cx = Math.floor(x / this.cellSize);
+            const cy = Math.floor(y / this.cellSize);
+            return {
+                cx: Math.max(0, Math.min(this.cols - 1, cx)),
+                cy: Math.max(0, Math.min(this.rows - 1, cy))
+            };
+        }
+
+        clear() {
+            this.cells.clear();
+            this.entityCellMap.clear();
+        }
+
+        insert(entity) {
+            if (!entity || typeof entity.x !== "number" || typeof entity.y !== "number") return;
+            const radius = entity.radius || 16;
+            const minCoords = this._getCellCoords(entity.x - radius, entity.y - radius);
+            const maxCoords = this._getCellCoords(entity.x + radius, entity.y + radius);
+
+            const occupiedKeys = [];
+
+            for (let cy = minCoords.cy; cy <= maxCoords.cy; cy++) {
+                for (let cx = minCoords.cx; cx <= maxCoords.cx; cx++) {
+                    const key = this._hash(cx, cy);
+                    let cell = this.cells.get(key);
+                    if (!cell) {
+                        cell = [];
+                        this.cells.set(key, cell);
+                    }
+                    cell.push(entity);
+                    occupiedKeys.push(key);
                 }
             }
+
+            this.entityCellMap.set(entity, occupiedKeys);
         }
-        entity._gridCells = null;
-    }
 
-    update(entity) {
-        this.remove(entity);
-        this.insert(entity);
-    }
+        remove(entity) {
+            const keys = this.entityCellMap.get(entity);
+            if (!keys) return;
 
-    query(x, y, w, h) {
-        const minX = Math.floor(x / this.cellSize);
-        const maxX = Math.floor((x + w) / this.cellSize);
-        const minY = Math.floor(y / this.cellSize);
-        const maxY = Math.floor((y + h) / this.cellSize);
-
-        this._queryId = (this._queryId + 1) & 0x7fffffff;
-        const currentQueryId = this._queryId;
-        const results = [];
-
-        for (let cy = minY; cy <= maxY; cy++) {
-            for (let cx = minX; cx <= maxX; cx++) {
-                const key = this._getKey(cx, cy);
+            for (let i = 0; i < keys.length; i++) {
+                const key = keys[i];
                 const cell = this.cells.get(key);
                 if (cell) {
+                    const idx = cell.indexOf(entity);
+                    if (idx !== -1) {
+                        cell.splice(idx, 1);
+                    }
+                    if (cell.length === 0) {
+                        this.cells.delete(key);
+                    }
+                }
+            }
+            this.entityCellMap.delete(entity);
+        }
+
+        update(entity) {
+            this.remove(entity);
+            this.insert(entity);
+        }
+
+        queryRadius(x, y, radius, filterFn = null) {
+            const results = [];
+            const visited = new Set();
+            const minCoords = this._getCellCoords(x - radius, y - radius);
+            const maxCoords = this._getCellCoords(x + radius, y + radius);
+            const r2 = radius * radius;
+
+            for (let cy = minCoords.cy; cy <= maxCoords.cy; cy++) {
+                for (let cx = minCoords.cx; cx <= maxCoords.cx; cx++) {
+                    const key = this._hash(cx, cy);
+                    const cell = this.cells.get(key);
+                    if (!cell) continue;
+
                     for (let i = 0; i < cell.length; i++) {
                         const ent = cell[i];
-                        if (ent._lastQueryId !== currentQueryId) {
-                            ent._lastQueryId = currentQueryId;
-                            results.push(ent);
+                        if (visited.has(ent)) continue;
+                        visited.add(ent);
+
+                        const dx = ent.x - x;
+                        const dy = ent.y - y;
+                        const distSq = dx * dx + dy * dy;
+
+                        if (distSq <= r2) {
+                            if (!filterFn || filterFn(ent)) {
+                                results.push(ent);
+                            }
                         }
                     }
                 }
             }
+            return results;
         }
-        return results;
+
+        queryBox(minX, minY, maxX, maxY, filterFn = null) {
+            const results = [];
+            const visited = new Set();
+            const minCoords = this._getCellCoords(minX, minY);
+            const maxCoords = this._getCellCoords(maxX, maxY);
+
+            for (let cy = minCoords.cy; cy <= maxCoords.cy; cy++) {
+                for (let cx = minCoords.cx; cx <= maxCoords.cx; cx++) {
+                    const key = this._hash(cx, cy);
+                    const cell = this.cells.get(key);
+                    if (!cell) continue;
+
+                    for (let i = 0; i < cell.length; i++) {
+                        const ent = cell[i];
+                        if (visited.has(ent)) continue;
+                        visited.add(ent);
+
+                        const r = ent.radius || 0;
+                        if (ent.x + r >= minX && ent.x - r <= maxX &&
+                            ent.y + r >= minY && ent.y - r <= maxY) {
+                            if (!filterFn || filterFn(ent)) {
+                                results.push(ent);
+                            }
+                        }
+                    }
+                }
+            }
+            return results;
+        }
     }
 
-    queryRadius(x, y, radius) {
-        return this.query(x - radius, y - radius, radius * 2, radius * 2);
-    }
-}
+    /* ========================================================================== */
+    /* 3. LỚP WORLD CHÍNH (WINDOW.GAME.WORLD)                                     */
+    /* ========================================================================== */
+    class World {
+        constructor() {
+            this.width = WORLD_CONSTANTS.WIDTH;
+            this.height = WORLD_CONSTANTS.HEIGHT;
+            this.tileSize = WORLD_CONSTANTS.TILE_SIZE;
+            this.cols = Math.floor(this.width / this.tileSize);
+            this.rows = Math.floor(this.height / this.tileSize);
 
-// ============================================================================
-// MODULE 2: HỆ THỐNG THẾ GIỚI CHÍNH
-// ============================================================================
-window.Game.World = {
-    tileSize: 64,
-    cols: 60,
-    rows: 60,
-    width: 60 * 64,  // 3840 px
-    height: 60 * 64, // 3840 px
+            // Hệ thống phân đoạn không gian
+            this.spatialGrid = new SpatialHashGrid(this.width, this.height, WORLD_CONSTANTS.GRID_CELL_SIZE);
+            this.staticColliders = [];
 
-    ABYSS_ROW: 25,
-    BRIDGE_TILE: { x: 30, y: 25 },
-    SOIL_TILE: { x: 26, y: 26 },
-    TREE_BRIDGE_TILE: { x: 26, y: 25 },
-    SEED_TILE: { x: 32, y: 28 },
-    CHEST_TILE: { x: 34, y: 26 },
+            // Lưu trữ dữ liệu Tile Map cho 3 Kỷ nguyên
+            this.tileMaps = {
+                [WORLD_CONSTANTS.ERAS.PAST]: new Uint8Array(this.cols * this.rows),
+                [WORLD_CONSTANTS.ERAS.PRESENT]: new Uint8Array(this.cols * this.rows),
+                [WORLD_CONSTANTS.ERAS.FUTURE]: new Uint8Array(this.cols * this.rows)
+            };
 
-    // Cờ phát hiện giao tranh cung cấp cho HUD
-    isPlayerInCombat: false,
+            // Dữ liệu cản trở di chuyển (collision bitmap)
+            this.collisionMap = new Uint8Array(this.cols * this.rows);
 
-    // SPATIAL HASH GRID CHO TOÀN BỘ ENTITIES
-    spatialGrid: null,
+            // Kỷ nguyên hiện tại
+            this.currentEra = WORLD_CONSTANTS.ERAS.PRESENT;
+            this.eraTransitionProgress = 1.0;
+            this.targetEra = WORLD_CONSTANTS.ERAS.PRESENT;
 
-    // OFFSCREEN PRE-RENDER CANVASES
-    _cachedBackgrounds: {
-        PAST: null,
-        PRESENT: null,
-        FUTURE: null
-    },
-    _lastTreePlantedState: false,
+            // Offscreen Canvas Caching cho từng kỷ nguyên
+            this.offscreenCanvases = {};
+            this.offscreenContexts = {};
+            this.chunkSize = 1024; // Mỗi chunk 1024x1024 px
+            this.chunksCols = Math.ceil(this.width / this.chunkSize);
+            this.chunksRows = Math.ceil(this.height / this.chunkSize);
+            this.terrainChunks = new Map(); // key: `${era}_${cx}_${cy}`
 
-    // KHE NỨT THỜI GIAN & TRỤ BẪY NĂNG LƯỢNG MÔI TRƯỜNG
-    timeRifts: [
-        {
-            id: 'RIFT_SOUTH_SLOW',
-            name: 'Khe Nứt Trì Hoãn Nam Thành',
-            type: 'TIME_SLOW',
-            x: 1820,
-            y: 2020,
-            radius: 130,
-            activeTimer: 0,
-            activeDuration: 6.0,
-            cooldown: 18.0,
-            currentCooldown: 0,
-            isTriggered: false,
-            shockwaveR: 0,
-            hp: 60,
-            maxHp: 60
-        },
-        {
-            id: 'RIFT_NORTH_VORTEX',
-            name: 'Trụ Năng Lượng Nghịch Đảo',
-            type: 'VORTEX_EXPLODE',
-            x: 2050,
-            y: 1380,
-            radius: 140,
-            activeTimer: 0,
-            activeDuration: 1.2,
-            cooldown: 22.0,
-            currentCooldown: 0,
-            isTriggered: false,
-            shockwaveR: 0,
-            hp: 80,
-            maxHp: 80
-        },
-        {
-            id: 'RIFT_WEST_CHEST',
-            name: 'Vòng Xoáy Lượng Tử Hộ Vệ',
-            type: 'TIME_SLOW',
-            x: 2250,
-            y: 1650,
-            radius: 120,
-            activeTimer: 0,
-            activeDuration: 5.5,
-            cooldown: 16.0,
-            currentCooldown: 0,
-            isTriggered: false,
-            shockwaveR: 0,
-            hp: 50,
-            maxHp: 50
-        }
-    ],
+            // Hệ thống 10 Cơ chế Thời Không
+            this.shrines = [];            // IV.1 Đài Cầu Nguyện
+            this.riftPortals = [];        // IV.2 Vết Nứt Cổng Dịch Chuyển
+            this.storms = [];             // IV.3 Bão Sét Dị Biến
+            this.stormTimer = 0;
+            this.stormInterval = 18.0;    // Cứ 18 giây kích hoạt 1 cụm bão mới
+            this.eternityTree = null;     // IV.4 Cây Nhân Quả
+            this.healingSprings = [];     // IV.5 Suối Sinh Mệnh
+            this.autoTurrets = [];        // IV.6 Trụ Pháo Tự Động
+            this.spikeTraps = [];         // IV.7 Bẫy Đinh Phản Nghịch
+            this.paradoxVault = null;     // IV.8 Rương Báu Nghịch Lý & 3 Ấn Ký
+            this.zeroGravityZones = [];   // IV.9 Vùng Không Trọng Lực
+            this.cursedGrounds = [];      // IV.10 Vùng Đất Quỷ Ám
 
-    // ĐÀI TẾ CHIẾN THUẬT & TRẠM NĂNG LƯỢNG
-    shrines: [
-        {
-            id: 'SHRINE_WAR',
-            type: 'WAR',
-            name: 'Đài Chiến Thần',
-            x: 1520,
-            y: 1820,
-            radius: 85,
-            cooldown: 45.0,
-            currentCooldown: 0,
-            stayTimer: 0,
-            requiredTime: 1.5,
-            color: '#f59e0b',
-            runeColor: '#ef4444'
-        },
-        {
-            id: 'SHRINE_ASTRAL',
-            type: 'ASTRAL',
-            name: 'Đài Tinh Không',
-            x: 2320,
-            y: 1820,
-            radius: 85,
-            cooldown: 45.0,
-            currentCooldown: 0,
-            stayTimer: 0,
-            requiredTime: 1.5,
-            color: '#00f5ff',
-            runeColor: '#3b82f6'
-        }
-    ],
+            // Hiệu ứng hạt thời tiết & thị giác
+            this.weatherParticles = [];
+            this.maxWeatherParticles = 120;
+            this.ambientLightRuneTime = 0;
+            this.floatingRocks = [];
 
-    waypoints: [
-        {
-            index: 0,
-            id: 'WAYPOINT_0',
-            name: 'Khu Xuất Phát',
-            tileX: 30,
-            tileY: 30,
-            x: 1920,
-            y: 1980
-        },
-        {
-            index: 1,
-            id: 'WAYPOINT_1',
-            name: 'Bờ Nam Vực Sâu',
-            tileX: 28,
-            tileY: 26,
-            x: 1792,
-            y: 1690
-        },
-        {
-            index: 2,
-            id: 'WAYPOINT_2',
-            name: 'Tiền Đồn Đấu Trường Boss',
-            tileX: 30,
-            tileY: 21,
-            x: 1920,
-            y: 1340
-        }
-    ],
-
-    anomalies: [
-        {
-            id: 'ANOMALY_SPEED_SOUTH',
-            type: 'SPEED',
-            name: 'Dị Điểm Gia Tốc Không Gian',
-            x: 1600,
-            y: 2080,
-            radius: 105,
-            speedMultiplier: 1.75,
-            cdrMultiplier: 1.0,
-            color: '#00f5ff'
-        },
-        {
-            id: 'ANOMALY_CDR_SOUTH',
-            type: 'CDR',
-            name: 'Dị Điểm Co Giãn Thời Gian',
-            x: 2272,
-            y: 1952,
-            radius: 105,
-            speedMultiplier: 1.0,
-            cdrMultiplier: 2.0,
-            color: '#c850ff'
-        },
-        {
-            id: 'ANOMALY_SPEED_NORTH',
-            type: 'SPEED',
-            name: 'Dị Điểm Gia Tốc Bắc Vực',
-            x: 1568,
-            y: 1184,
-            radius: 110,
-            speedMultiplier: 1.75,
-            cdrMultiplier: 1.0,
-            color: '#00f5ff'
-        },
-        {
-            id: 'ANOMALY_CDR_NORTH',
-            type: 'CDR',
-            name: 'Dị Điểm Co Giãn Bắc Vực',
-            x: 2272,
-            y: 1184,
-            radius: 110,
-            speedMultiplier: 1.0,
-            cdrMultiplier: 2.0,
-            color: '#c850ff'
-        }
-    ],
-
-    traps: [],
-    weatherParticles: [],
-    _lastWeatherTime: 0,
-    grid: [],
-    decorGrid: [],
-    _initialized: false,
-
-    init: function () {
-        this.grid = [];
-        this.decorGrid = [];
-        this.isPlayerInCombat = false;
-
-        // Khởi tạo Lưới Không Gian (Spatial Hash Grid)
-        this.spatialGrid = new SpatialHashGrid(128);
-
-        // Reset bộ đếm đài tế & khe nứt
-        for (let i = 0; i < this.shrines.length; i++) {
-            this.shrines[i].currentCooldown = 0;
-            this.shrines[i].stayTimer = 0;
+            // Cache hiệu ứng âm thanh / combat check
+            this.lastCombatTime = 0;
+            this.cameraShake = { x: 0, y: 0, intensity: 0, duration: 0 };
+            this.minimapExpanded = false;
         }
 
-        for (let i = 0; i < this.timeRifts.length; i++) {
-            this.timeRifts[i].currentCooldown = 0;
-            this.timeRifts[i].activeTimer = 0;
-            this.timeRifts[i].isTriggered = false;
-            this.timeRifts[i].shockwaveR = 0;
-            this.timeRifts[i].hp = this.timeRifts[i].maxHp;
-        }
+        /* ---------------------------------------------------------------------- */
+        /* KHỞI TẠO TỔNG THỂ BẢN ĐỒ VÀ BỘ NHỚ ĐỆM                                 */
+        /* ---------------------------------------------------------------------- */
+        init(canvas, ctx) {
+            this.mainCanvas = canvas || (window.Game.Main && window.Game.Main.canvas) || document.getElementById('gameCanvas');
+            this.mainCtx = ctx || (this.mainCanvas ? this.mainCanvas.getContext('2d') : null);
 
-        if (window.Game && window.Game.state) {
-            if (!Array.isArray(window.Game.state.unlockedWaypoints)) {
-                window.Game.state.unlockedWaypoints = [true, false, false];
-            } else if (window.Game.state.unlockedWaypoints.length < 3) {
-                window.Game.state.unlockedWaypoints[0] = true;
-                window.Game.state.unlockedWaypoints[1] = !!window.Game.state.unlockedWaypoints[1];
-                window.Game.state.unlockedWaypoints[2] = !!window.Game.state.unlockedWaypoints[2];
-            }
-            if (typeof window.Game.state.chestOiled !== 'boolean') {
-                window.Game.state.chestOiled = false;
-            }
-            if (typeof window.Game.state.chestOpened !== 'boolean') {
-                window.Game.state.chestOpened = false;
+            this._generateProceduralTerrain();
+            this._initStaticColliders();
+            this._initInteractiveSystems();
+            this._initWeatherAndFloatingDebris();
+            this._prebuildOffscreenTerrainChunks();
+
+            // Đồng bộ trạng thái toàn cục Game.state
+            if (window.Game.state) {
+                window.Game.state.currentEra = this.currentEra;
+                window.Game.state.isTreePlanted = window.Game.state.isTreePlanted || false;
+                window.Game.state.paradoxSeals = window.Game.state.paradoxSeals || {
+                    PAST: false,
+                    PRESENT: false,
+                    FUTURE: false
+                };
+                window.Game.state.bonusMaxHp = window.Game.state.bonusMaxHp || 0;
             }
         }
 
-        const hash = (x, y) => {
-            const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
-            return n - Math.floor(n);
-        };
+        /* ---------------------------------------------------------------------- */
+        /* TẠO MÔ HÌNH ĐỊA HÌNH CHO CẢ 3 KỶ NGUYÊN (QUÁ KHỨ - HIỆN TẠI - TƯƠNG LAI) */
+        /* ---------------------------------------------------------------------- */
+        _generateProceduralTerrain() {
+            const T = WORLD_CONSTANTS.TERRAIN_TYPES;
 
-        for (let y = 0; y < this.rows; y++) {
-            const row = [];
-            const decorRow = [];
-            for (let x = 0; x < this.cols; x++) {
-                const r = hash(x, y);
-                decorRow.push(r);
+            for (let y = 0; y < this.rows; y++) {
+                for (let x = 0; x < this.cols; x++) {
+                    const idx = y * this.cols + x;
 
-                if (x === 0 || x === this.cols - 1 || y === 0 || y === this.rows - 1) {
-                    row.push(1);
-                    continue;
+                    // Viền bản đồ là Void không thể vượt qua
+                    if (x <= 1 || x >= this.cols - 2 || y <= 1 || y >= this.rows - 2) {
+                        this.tileMaps.PAST[idx] = T.VOID;
+                        this.tileMaps.PRESENT[idx] = T.VOID;
+                        this.tileMaps.FUTURE[idx] = T.VOID;
+                        this.collisionMap[idx] = 1;
+                        continue;
+                    }
+
+                    // Tọa độ thực tế (pixel)
+                    const px = x * this.tileSize;
+                    const py = y * this.tileSize;
+
+                    // 1. Phân bố Suối Nước Sinh Mệnh ở Trung Tâm (Hiện Tại)
+                    const distFromCenter = Math.hypot(px - 2048, py - 2048);
+                    if (distFromCenter < 220) {
+                        this.tileMaps.PAST[idx] = T.WATER;
+                        this.tileMaps.PRESENT[idx] = T.HEALING_WATER;
+                        this.tileMaps.FUTURE[idx] = T.CYBER_TILE;
+                        this.collisionMap[idx] = 0;
+                        continue;
+                    }
+
+                    // 2. Vùng Đất Bị Nguyền (Tây Bắc: x < 1300, y < 1300)
+                    if (px < 1300 && py < 1300 && distFromCenter > 400) {
+                        this.tileMaps.PAST[idx] = T.STONE_PATH;
+                        this.tileMaps.PRESENT[idx] = T.CURSED_SOIL;
+                        this.tileMaps.FUTURE[idx] = T.LAVA;
+                        this.collisionMap[idx] = 0;
+                        continue;
+                    }
+
+                    // 3. Vùng Không Trọng Lực (Đông Nam: x > 2700, y > 2700)
+                    if (px > 2700 && py > 2700) {
+                        this.tileMaps.PAST[idx] = T.ANCIENT_RUINS;
+                        this.tileMaps.PRESENT[idx] = T.GRASS;
+                        this.tileMaps.FUTURE[idx] = T.ZERO_G_GROUND;
+                        this.collisionMap[idx] = 0;
+                        continue;
+                    }
+
+                    // 4. Đường Cổ Thạch Nối Các Trạm
+                    const isMainPathX = Math.abs(py - 2048) < 96;
+                    const isMainPathY = Math.abs(px - 2048) < 96;
+                    if (isMainPathX || isMainPathY) {
+                        this.tileMaps.PAST[idx] = T.STONE_PATH;
+                        this.tileMaps.PRESENT[idx] = T.STONE_PATH;
+                        this.tileMaps.FUTURE[idx] = T.CYBER_TILE;
+                        this.collisionMap[idx] = 0;
+                        continue;
+                    }
+
+                    // 5. Hồ Nước Quá Khứ hóa thành Thung Lũng Tương Lai
+                    const lakeNoise = Math.sin(x * 0.15) + Math.cos(y * 0.15);
+                    if (lakeNoise > 1.25 && distFromCenter > 600) {
+                        this.tileMaps.PAST[idx] = T.WATER;
+                        this.tileMaps.PRESENT[idx] = T.WATER;
+                        this.tileMaps.FUTURE[idx] = T.ANCIENT_RUINS;
+                        this.collisionMap[idx] = 1;
+                        continue;
+                    }
+
+                    // Địa hình mặc định phân hóa theo Kỷ Nguyên
+                    this.tileMaps.PAST[idx] = T.ANCIENT_RUINS;
+                    this.tileMaps.PRESENT[idx] = T.GRASS;
+                    this.tileMaps.FUTURE[idx] = T.CYBER_TILE;
+                    this.collisionMap[idx] = 0;
                 }
+            }
+        }
 
-                if (y === this.ABYSS_ROW) {
-                    row.push(3);
-                    continue;
-                }
+        /* ---------------------------------------------------------------------- */
+        /* THIẾT LẬP VẬT CẢN TĨNH (STATIC COLLIDERS)                              */
+        /* ---------------------------------------------------------------------- */
+        _initStaticColliders() {
+            this.staticColliders = [];
 
-                const isSpawnOrCenter = x >= 24 && x <= 36 && y >= 23 && y <= 35;
-                const isBossArena = x >= 20 && x <= 40 && y >= 10 && y <= 24;
-                const isMainRoad = x >= 28 && x <= 32 && y >= 8 && y <= 50;
+            // 1. Biên thế giới (4 bức tường dày 96px)
+            this.staticColliders.push({ x: this.width / 2, y: 32, width: this.width, height: 64, type: "WALL" });
+            this.staticColliders.push({ x: this.width / 2, y: this.height - 32, width: this.width, height: 64, type: "WALL" });
+            this.staticColliders.push({ x: 32, y: this.height / 2, width: 64, height: this.height, type: "WALL" });
+            this.staticColliders.push({ x: this.width - 32, y: this.height / 2, width: 64, height: this.height, type: "WALL" });
 
-                if (isSpawnOrCenter || isBossArena || isMainRoad) {
-                    row.push(0);
-                    continue;
-                }
-
-                const wx = x * this.tileSize + this.tileSize / 2;
-                const wy = y * this.tileSize + this.tileSize / 2;
-                let nearAnomalyOrShrine = false;
-
-                // Tránh tạo vật cản đè lên Dị Điểm
-                for (let i = 0; i < this.anomalies.length; i++) {
-                    const anom = this.anomalies[i];
-                    if (Math.hypot(wx - anom.x, wy - anom.y) < anom.radius + 80) {
-                        nearAnomalyOrShrine = true;
-                        break;
+            // 2. Chuyển đổi các Tile cản trở thành Box Collider
+            for (let y = 2; y < this.rows - 2; y++) {
+                for (let x = 2; x < this.cols - 2; x++) {
+                    const idx = y * this.cols + x;
+                    if (this.collisionMap[idx] === 1) {
+                        this.staticColliders.push({
+                            x: x * this.tileSize + this.tileSize / 2,
+                            y: y * this.tileSize + this.tileSize / 2,
+                            width: this.tileSize,
+                            height: this.tileSize,
+                            type: "OBSTACLE"
+                        });
                     }
                 }
-                // Tránh tạo vật cản đè lên Đài Năng Lượng & Khe Nứt
-                if (!nearAnomalyOrShrine) {
-                    for (let s = 0; s < this.shrines.length; s++) {
-                        const sh = this.shrines[s];
-                        if (Math.hypot(wx - sh.x, wy - sh.y) < sh.radius + 60) {
-                            nearAnomalyOrShrine = true;
-                            break;
-                        }
-                    }
-                }
-                if (!nearAnomalyOrShrine) {
-                    for (let rf = 0; rf < this.timeRifts.length; rf++) {
-                        const rift = this.timeRifts[rf];
-                        if (Math.hypot(wx - rift.x, wy - rift.y) < rift.radius + 60) {
-                            nearAnomalyOrShrine = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (nearAnomalyOrShrine) {
-                    row.push(0);
-                    continue;
-                }
-
-                if (r < 0.045) {
-                    row.push(1);
-                } else if (r > 0.92) {
-                    row.push(2);
-                } else {
-                    row.push(0);
-                }
             }
-            this.grid.push(row);
-            this.decorGrid.push(decorRow);
-        }
 
-        this._initTraps();
-        this._initWeatherParticles();
-        this._buildSpatialObstacles();
-        this.rebuildAllBackgroundCaches();
-        this._initialized = true;
-    },
-
-    // ========================================================================
-    // TÍNH NĂNG 1: NÂNG CẤP OFFSCREEN CANVAS CACHING CHO NỀN BẢN ĐỒ
-    // ========================================================================
-    rebuildAllBackgroundCaches: function () {
-        const timelines = ['PAST', 'PRESENT', 'FUTURE'];
-        for (let i = 0; i < timelines.length; i++) {
-            this.rebuildBackgroundCache(timelines[i]);
-        }
-        if (window.Game.state) {
-            this._lastTreePlantedState = !!window.Game.state.isTreePlanted;
-        }
-    },
-
-    rebuildBackgroundCache: function (timeline) {
-        let offCanvas = this._cachedBackgrounds[timeline];
-        if (!offCanvas) {
-            offCanvas = document.createElement('canvas');
-            offCanvas.width = this.width;
-            offCanvas.height = this.height;
-            this._cachedBackgrounds[timeline] = offCanvas;
-        }
-
-        const offCtx = offCanvas.getContext('2d', { alpha: false });
-        if (!offCtx) return;
-
-        const ts = this.tileSize;
-
-        // Vẽ toàn bộ các ô nền đất tĩnh
-        for (let r = 0; r < this.rows; r++) {
-            for (let c = 0; c < this.cols; c++) {
-                const wx = c * ts;
-                const wy = r * ts;
-                const decor = this.decorGrid[r][c];
-                const isNorthBossZone = r < this.ABYSS_ROW;
-
-                if (r === this.ABYSS_ROW) {
-                    // Vẽ lớp đáy tĩnh của vực thẳm
-                    offCtx.fillStyle = timeline === 'FUTURE' ? '#030408' : '#0c0a10';
-                    offCtx.fillRect(wx, wy, ts, ts);
-
-                    offCtx.fillStyle =
-                        timeline === 'PAST'
-                            ? '#4a321a'
-                            : timeline === 'PRESENT'
-                            ? '#264730'
-                            : '#00d9ff';
-                    offCtx.fillRect(wx, wy, ts, 6);
-                    offCtx.fillRect(wx, wy + ts - 6, ts, 6);
-                } else {
-                    this._drawGroundTile(offCtx, wx, wy, c, r, decor, timeline, isNorthBossZone);
-                }
+            // Nạp toàn bộ collider vào Spatial Hash Grid
+            for (let i = 0; i < this.staticColliders.length; i++) {
+                const c = this.staticColliders[i];
+                c.radius = Math.max(c.width, c.height) / 2;
+                this.spatialGrid.insert(c);
             }
         }
-    },
 
-    // ========================================================================
-    // TÍNH NĂNG 2: SPATIAL HASH GRID DÀNH CHO VẬT CẢN & ENTITY
-    // ========================================================================
-    _buildSpatialObstacles: function () {
-        if (!this.spatialGrid) return;
-        this.spatialGrid.clear();
+        /* ---------------------------------------------------------------------- */
+        /* KHỞI TẠO 10 CƠ CHẾ THỜI KHÔNG CHI TIẾT (IV.1 -> IV.10)                 */
+        /* ---------------------------------------------------------------------- */
+        _initInteractiveSystems() {
+            // IV.1 ĐÀI CẦU NGUYỆN NHÂN QUẢ (TEMPORAL SHRINES)
+            this.shrines = [
+                {
+                    id: "shrine_war_1",
+                    type: WORLD_CONSTANTS.SHRINE_TYPES.WAR,
+                    name: "Đài Chiến Binh Nhân Quả",
+                    x: 1520,
+                    y: 1820,
+                    radius: 38,
+                    cooldown: 0,
+                    maxCooldown: WORLD_CONSTANTS.SHRINE_COOLDOWN,
+                    isChanneling: false,
+                    channelProgress: 0,
+                    requiredChannelTime: WORLD_CONSTANTS.INTERACTION_CHANNEL_TIME,
+                    activeBeamTimer: 0,
+                    runeAngle: 0,
+                    buffType: "DAMAGE_BOOST",
+                    buffDuration: 10.0,
+                    color: "#ff3b30",
+                    glowColor: "rgba(255, 59, 48, 0.45)"
+                },
+                {
+                    id: "shrine_immortal_2",
+                    type: WORLD_CONSTANTS.SHRINE_TYPES.IMMORTALITY,
+                    name: "Đài Bất Tử Quang Huy",
+                    x: 2320,
+                    y: 1820,
+                    radius: 38,
+                    cooldown: 0,
+                    maxCooldown: WORLD_CONSTANTS.SHRINE_COOLDOWN,
+                    isChanneling: false,
+                    channelProgress: 0,
+                    requiredChannelTime: WORLD_CONSTANTS.INTERACTION_CHANNEL_TIME,
+                    activeBeamTimer: 0,
+                    runeAngle: 0,
+                    buffType: "INVULNERABILITY",
+                    buffDuration: 10.0,
+                    color: "#ffd60a",
+                    glowColor: "rgba(255, 214, 10, 0.45)"
+                },
+                {
+                    id: "shrine_space_3",
+                    type: WORLD_CONSTANTS.SHRINE_TYPES.SPACE,
+                    name: "Đài Thời Không Thần Vực",
+                    x: 2048,
+                    y: 1250,
+                    radius: 38,
+                    cooldown: 0,
+                    maxCooldown: WORLD_CONSTANTS.SHRINE_COOLDOWN,
+                    isChanneling: false,
+                    channelProgress: 0,
+                    requiredChannelTime: WORLD_CONSTANTS.INTERACTION_CHANNEL_TIME,
+                    activeBeamTimer: 0,
+                    runeAngle: 0,
+                    buffType: "COOLDOWN_REDUCTION",
+                    buffDuration: 12.0,
+                    color: "#00f0ff",
+                    glowColor: "rgba(0, 240, 255, 0.45)"
+                }
+            ];
 
-        const ts = this.tileSize;
-        for (let r = 0; r < this.rows; r++) {
-            for (let c = 0; c < this.cols; c++) {
-                const cell = this.grid[r][c];
-                if (cell === 1 || cell === 2) {
-                    this.spatialGrid.insert({
-                        id: `OBS_${c}_${r}`,
-                        type: 'OBSTACLE',
-                        obstacleType: cell,
-                        x: c * ts + ts / 2,
-                        y: r * ts + ts / 2,
-                        radius: 24,
-                        isStatic: true
+            // IV.2 VẾT NỨT THỜI KHÔNG DI ĐỘNG (RIFT PORTAL)
+            this.riftPortals = [
+                {
+                    id: "portal_pair_1_a",
+                    pairId: "portal_pair_1_b",
+                    name: "Cổng Hư Không Khởi Điểm",
+                    x: 1024,
+                    y: 2048,
+                    targetX: 3072,
+                    targetY: 2048,
+                    radius: 42,
+                    cooldown: 0,
+                    maxCooldown: WORLD_CONSTANTS.PORTAL_COOLDOWN,
+                    vortexRotation: 0,
+                    pulsePhase: 0,
+                    color: "#9d4edd"
+                },
+                {
+                    id: "portal_pair_1_b",
+                    pairId: "portal_pair_1_a",
+                    name: "Cổng Hư Không Đích Đến",
+                    x: 3072,
+                    y: 2048,
+                    targetX: 1024,
+                    targetY: 2048,
+                    radius: 42,
+                    cooldown: 0,
+                    maxCooldown: WORLD_CONSTANTS.PORTAL_COOLDOWN,
+                    vortexRotation: 0,
+                    pulsePhase: Math.PI,
+                    color: "#9d4edd"
+                },
+                {
+                    id: "portal_pair_2_a",
+                    pairId: "portal_pair_2_b",
+                    name: "Cổng Hư Thiên Nam",
+                    x: 2048,
+                    y: 3200,
+                    targetX: 2048,
+                    targetY: 896,
+                    radius: 42,
+                    cooldown: 0,
+                    maxCooldown: WORLD_CONSTANTS.PORTAL_COOLDOWN,
+                    vortexRotation: 0,
+                    pulsePhase: 0,
+                    color: "#06d6a0"
+                },
+                {
+                    id: "portal_pair_2_b",
+                    pairId: "portal_pair_2_a",
+                    name: "Cổng Hư Thiên Bắc",
+                    x: 2048,
+                    y: 896,
+                    targetX: 2048,
+                    targetY: 3200,
+                    radius: 42,
+                    cooldown: 0,
+                    maxCooldown: WORLD_CONSTANTS.PORTAL_COOLDOWN,
+                    vortexRotation: 0,
+                    pulsePhase: Math.PI,
+                    color: "#06d6a0"
+                }
+            ];
+
+            // IV.4 CÂY NHÂN QUẢ ĐƠM QUẢ (FRUIT OF ETERNITY)
+            this.eternityTree = {
+                x: 1820,
+                y: 2280,
+                radius: 48,
+                hasFruit: false,
+                isPlanted: false,
+                growthStage: 0,
+                fruitHarvested: false,
+                glowPulse: 0,
+                floatingLeafParticles: []
+            };
+
+            // IV.5 SUỐI NƯỚC SINH MỆNH (HEALING SPRINGS)
+            this.healingSprings = [
+                {
+                    id: "healing_spring_core",
+                    name: "Suối Thánh Sinh Mệnh",
+                    x: 2048,
+                    y: 2048,
+                    radius: 190,
+                    healPerSecond: 25,
+                    shieldPerSecond: 15,
+                    era: WORLD_CONSTANTS.ERAS.PRESENT,
+                    ripplePhase: 0,
+                    bubbleParticles: []
+                }
+            ];
+
+            // IV.6 TRỤ PHÁO TỰ ĐỘNG (AUTO-TURRETS)
+            this.autoTurrets = [
+                {
+                    id: "turret_alpha",
+                    name: "Trụ Laser Cổ Alpha",
+                    x: 2560,
+                    y: 1536,
+                    radius: 36,
+                    attackRange: 420,
+                    damage: 65,
+                    fireRate: 0.85,
+                    fireTimer: 0,
+                    isRepaired: false,
+                    repairCost: WORLD_CONSTANTS.TURRET_REPAIR_COST,
+                    target: null,
+                    barrelAngle: 0,
+                    laserBeamVisual: null,
+                    era: WORLD_CONSTANTS.ERAS.FUTURE
+                },
+                {
+                    id: "turret_beta",
+                    name: "Trụ Laser Cổ Beta",
+                    x: 1536,
+                    y: 2560,
+                    radius: 36,
+                    attackRange: 420,
+                    damage: 65,
+                    fireRate: 0.85,
+                    fireTimer: 0,
+                    isRepaired: false,
+                    repairCost: WORLD_CONSTANTS.TURRET_REPAIR_COST,
+                    target: null,
+                    barrelAngle: 0,
+                    laserBeamVisual: null,
+                    era: WORLD_CONSTANTS.ERAS.FUTURE
+                }
+            ];
+
+            // IV.7 BẪY ĐINH PHẢN NGHỊCH (SPIKE TRAP REVERSAL)
+            this.spikeTraps = [
+                {
+                    id: "trap_cluster_1",
+                    x: 1720,
+                    y: 1720,
+                    width: 140,
+                    height: 140,
+                    spikeState: "UP",
+                    isReversed: false,
+                    damage: 40,
+                    bleedDamage: 8,
+                    bleedDuration: 4.0,
+                    cycleTimer: 0,
+                    cycleInterval: 3.5,
+                    lever: {
+                        x: 1620,
+                        y: 1720,
+                        radius: 26,
+                        isActivated: false
+                    }
+                },
+                {
+                    id: "trap_cluster_2",
+                    x: 2380,
+                    y: 2380,
+                    width: 140,
+                    height: 140,
+                    spikeState: "UP",
+                    isReversed: false,
+                    damage: 40,
+                    bleedDamage: 8,
+                    bleedDuration: 4.0,
+                    cycleTimer: 1.75,
+                    cycleInterval: 3.5,
+                    lever: {
+                        x: 2480,
+                        y: 2380,
+                        radius: 26,
+                        isActivated: false
+                    }
+                }
+            ];
+
+            // IV.8 RƯƠNG BÁU THỜI GIAN CẤP CAO (PARADOX VAULT) & 3 ẤN KÝ
+            this.paradoxVault = {
+                id: "vault_sanctum",
+                name: "Rương Báu Nghịch Lý Tối Cao",
+                x: 2048,
+                y: 2560,
+                radius: 46,
+                isUnlocked: false,
+                isOpened: false,
+                pillarSeals: {
+                    [WORLD_CONSTANTS.ERAS.PAST]: {
+                        id: "seal_past",
+                        name: "Cột Ấn Ký Thái Cổ",
+                        x: 1200,
+                        y: 1200,
+                        radius: 34,
+                        activated: false,
+                        color: "#ff9f1c"
+                    },
+                    [WORLD_CONSTANTS.ERAS.PRESENT]: {
+                        id: "seal_present",
+                        name: "Cột Ấn Ký Thực Tại",
+                        x: 2896,
+                        y: 1200,
+                        radius: 34,
+                        activated: false,
+                        color: "#2ec4b6"
+                    },
+                    [WORLD_CONSTANTS.ERAS.FUTURE]: {
+                        id: "seal_future",
+                        name: "Cột Ấn Ký Tận Thế",
+                        x: 2048,
+                        y: 3300,
+                        radius: 34,
+                        activated: false,
+                        color: "#e71d36"
+                    }
+                },
+                pulseAngle: 0,
+                unlockedAnimationTimer: 0
+            };
+
+            // IV.9 KHU VỰC KHÔNG TRỌNG LỰC (ZERO-GRAVITY ZONE)
+            this.zeroGravityZones = [
+                {
+                    id: "zero_g_sector",
+                    name: "Vực Không Trọng Lực",
+                    x: 3100,
+                    y: 3100,
+                    radius: 360,
+                    projectileSpeedBonus: 0.40,
+                    attackRangeBonus: 0.40,
+                    floatingDebrisCount: 24
+                }
+            ];
+
+            // IV.10 VÙNG ĐẤT BỊ NGUYỀN (CURSED GROUNDS)
+            this.cursedGrounds = [
+                {
+                    id: "cursed_abyss_sector",
+                    name: "Vùng Đất Quỷ Ám",
+                    x: 950,
+                    y: 950,
+                    radius: 420,
+                    expMultiplier: 1.50,
+                    spawnRateMultiplier: 2.0,
+                    fogDensity: 0.65,
+                    fogPulse: 0
+                }
+            ];
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* KHỞI TẠO BỤI THỜI TIẾT VÀ MẢNH VỠ NỔI LƠ LỬNG                          */
+        /* ---------------------------------------------------------------------- */
+        _initWeatherAndFloatingDebris() {
+            this.weatherParticles = [];
+            for (let i = 0; i < this.maxWeatherParticles; i++) {
+                this.weatherParticles.push({
+                    x: Math.random() * this.width,
+                    y: Math.random() * this.height,
+                    vx: (Math.random() - 0.5) * 20,
+                    vy: 30 + Math.random() * 45,
+                    size: 1.5 + Math.random() * 2.5,
+                    alpha: 0.2 + Math.random() * 0.5,
+                    seed: Math.random() * 100
+                });
+            }
+
+            this.floatingRocks = [];
+            const zg = this.zeroGravityZones[0];
+            if (zg) {
+                for (let i = 0; i < zg.floatingDebrisCount; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = Math.random() * (zg.radius * 0.85);
+                    this.floatingRocks.push({
+                        baseX: zg.x + Math.cos(angle) * dist,
+                        baseY: zg.y + Math.sin(angle) * dist,
+                        x: 0,
+                        y: 0,
+                        floatSpeed: 0.6 + Math.random() * 1.2,
+                        amplitude: 8 + Math.random() * 16,
+                        size: 10 + Math.random() * 22,
+                        rotation: Math.random() * Math.PI * 2,
+                        rotSpeed: (Math.random() - 0.5) * 0.8,
+                        phase: Math.random() * Math.PI * 2
                     });
                 }
             }
         }
-    },
 
-    // Cập nhật động toàn bộ Quái vật, Đạn và Khe nứt vào Lưới Không Gian mỗi Frame
-    updateSpatialEntities: function (projectiles, enemies) {
-        if (!this.spatialGrid) return;
+        /* ---------------------------------------------------------------------- */
+        /* OFFSCREEN CANVAS CHUNKING: TĂNG TỐC VẼ ĐỊA HÌNH KHÔNG GIẬT LAG         */
+        /* ---------------------------------------------------------------------- */
+        _prebuildOffscreenTerrainChunks() {
+            const eras = [
+                WORLD_CONSTANTS.ERAS.PAST,
+                WORLD_CONSTANTS.ERAS.PRESENT,
+                WORLD_CONSTANTS.ERAS.FUTURE
+            ];
 
-        // Xóa sạch và tái lập từ các vật cản tĩnh
-        this._buildSpatialObstacles();
+            for (let e = 0; e < eras.length; e++) {
+                const era = eras[e];
+                for (let cy = 0; cy < this.chunksRows; cy++) {
+                    for (let cx = 0; cx < this.chunksCols; cx++) {
+                        const chunkCanvas = document.createElement("canvas");
+                        chunkCanvas.width = this.chunkSize;
+                        chunkCanvas.height = this.chunkSize;
+                        const chunkCtx = chunkCanvas.getContext("2d", { alpha: false });
 
-        // 1. Thêm các khe nứt và trụ thời gian
-        for (let i = 0; i < this.timeRifts.length; i++) {
-            const rift = this.timeRifts[i];
-            this.spatialGrid.insert({
-                id: rift.id,
-                type: 'TIME_RIFT',
-                raw: rift,
-                x: rift.x,
-                y: rift.y,
-                radius: 28
-            });
-        }
+                        this._renderTilesToChunkContext(chunkCtx, era, cx, cy);
 
-        // 2. Thêm Quái vật
-        const enemyList = enemies || this._getActiveEnemiesList();
-        for (let i = 0; i < enemyList.length; i++) {
-            const e = enemyList[i];
-            if (!e || e.dead || e.isDead || (typeof e.hp === 'number' && e.hp <= 0)) continue;
-            this.spatialGrid.insert({
-                id: e.id || `ENEMY_${i}`,
-                type: 'ENEMY',
-                raw: e,
-                x: e.x,
-                y: e.y,
-                radius: e.radius || e.size || 22
-            });
-        }
-
-        // 3. Thêm Đạn người chơi / quái
-        if (Array.isArray(projectiles)) {
-            for (let i = 0; i < projectiles.length; i++) {
-                const p = projectiles[i];
-                if (!p || p.dead) continue;
-                this.spatialGrid.insert({
-                    id: p.id || `PROJ_${i}`,
-                    type: 'PROJECTILE',
-                    raw: p,
-                    x: p.x,
-                    y: p.y,
-                    radius: p.radius || 6
-                });
+                        const key = `${era}_${cx}_${cy}`;
+                        this.terrainChunks.set(key, chunkCanvas);
+                    }
+                }
             }
         }
-    },
 
-    // Truy vấn nhanh các thực thể va chạm bằng Spatial Hash
-    getNearbyEntities: function (x, y, radius) {
-        if (!this.spatialGrid) return [];
-        return this.spatialGrid.queryRadius(x, y, radius);
-    },
+        _renderTilesToChunkContext(ctx, era, chunkX, chunkY) {
+            const startPixelX = chunkX * this.chunkSize;
+            const startPixelY = chunkY * this.chunkSize;
+            const tileMap = this.tileMaps[era];
 
-    _initTraps: function () {
-        this.traps = [
-            { timeline: 'PAST', type: 'SWAMP', name: 'Đầm Lầy Cổ Đại', x: 1720, y: 1860, radius: 115, speedMultiplier: 0.55, damagePerSec: 0 },
-            { timeline: 'PAST', type: 'SWAMP', name: 'Đầm Lầy Cổ Đại', x: 2140, y: 2120, radius: 125, speedMultiplier: 0.55, damagePerSec: 0 },
-            { timeline: 'PAST', type: 'SWAMP', name: 'Đầm Lầy Cổ Đại', x: 1920, y: 1520, radius: 95, speedMultiplier: 0.55, damagePerSec: 0 },
-            { timeline: 'PAST', type: 'SWAMP', name: 'Đầm Lầy Cổ Đại', x: 1680, y: 1080, radius: 120, speedMultiplier: 0.55, damagePerSec: 0 },
-            { timeline: 'PAST', type: 'SWAMP', name: 'Đầm Lầy Cổ Đại', x: 2180, y: 1050, radius: 120, speedMultiplier: 0.55, damagePerSec: 0 },
-            { timeline: 'PAST', type: 'SWAMP', name: 'Đầm Lầy Cổ Đại', x: 1450, y: 2350, radius: 135, speedMultiplier: 0.55, damagePerSec: 0 },
+            const startTileX = Math.floor(startPixelX / this.tileSize);
+            const startTileY = Math.floor(startPixelY / this.tileSize);
+            const endTileX = Math.min(this.cols, Math.ceil((startPixelX + this.chunkSize) / this.tileSize));
+            const endTileY = Math.min(this.rows, Math.ceil((startPixelY + this.chunkSize) / this.tileSize));
 
-            { timeline: 'PRESENT', type: 'THORNS', name: 'Bụi Gai Độc Đột Biến', x: 2010, y: 1840, radius: 78, speedMultiplier: 0.85, damagePerSec: 8 },
-            { timeline: 'PRESENT', type: 'THORNS', name: 'Bụi Gai Độc Đột Biến', x: 1760, y: 1960, radius: 82, speedMultiplier: 0.85, damagePerSec: 8 },
-            { timeline: 'PRESENT', type: 'THORNS', name: 'Bụi Gai Độc Đột Biến', x: 2140, y: 1740, radius: 75, speedMultiplier: 0.85, damagePerSec: 8 },
-            { timeline: 'PRESENT', type: 'THORNS', name: 'Bụi Gai Độc Đột Biến', x: 1760, y: 1240, radius: 85, speedMultiplier: 0.85, damagePerSec: 8 },
-            { timeline: 'PRESENT', type: 'THORNS', name: 'Bụi Gai Độc Đột Biến', x: 2090, y: 1220, radius: 85, speedMultiplier: 0.85, damagePerSec: 8 },
-            { timeline: 'PRESENT', type: 'THORNS', name: 'Bụi Gai Độc Đột Biến', x: 1920, y: 960, radius: 90, speedMultiplier: 0.85, damagePerSec: 8 },
+            ctx.fillStyle = era === WORLD_CONSTANTS.ERAS.PAST ? "#251e18" :
+                            era === WORLD_CONSTANTS.ERAS.PRESENT ? "#122315" : "#0f1423";
+            ctx.fillRect(0, 0, this.chunkSize, this.chunkSize);
 
-            { timeline: 'FUTURE', type: 'LASER', name: 'Lưới Điện Laser An Ninh', x: 1760, y: 1820, width: 240, height: 54, cyclePeriod: 2.5, phaseOffset: 0.0, damagePerSec: 20 },
-            { timeline: 'FUTURE', type: 'LASER', name: 'Lưới Điện Laser An Ninh', x: 2020, y: 1740, width: 220, height: 54, cyclePeriod: 2.5, phaseOffset: 1.25, damagePerSec: 20 },
-            { timeline: 'FUTURE', type: 'LASER', name: 'Lưới Điện Laser An Ninh', x: 1660, y: 1440, width: 250, height: 54, cyclePeriod: 2.5, phaseOffset: 0.6, damagePerSec: 20 },
-            { timeline: 'FUTURE', type: 'LASER', name: 'Lưới Điện Laser An Ninh', x: 1800, y: 1120, width: 260, height: 56, cyclePeriod: 2.5, phaseOffset: 0.0, damagePerSec: 20 },
-            { timeline: 'FUTURE', type: 'LASER', name: 'Lưới Điện Laser An Ninh', x: 1620, y: 940, width: 220, height: 56, cyclePeriod: 2.5, phaseOffset: 1.25, damagePerSec: 20 },
-            { timeline: 'FUTURE', type: 'LASER', name: 'Lưới Điện Laser An Ninh', x: 2020, y: 940, width: 220, height: 56, cyclePeriod: 2.5, phaseOffset: 1.25, damagePerSec: 20 }
-        ];
-    },
+            for (let ty = startTileY; ty < endTileY; ty++) {
+                for (let tx = startTileX; tx < endTileX; tx++) {
+                    const idx = ty * this.cols + tx;
+                    const tileType = tileMap[idx];
+                    const destX = tx * this.tileSize - startPixelX;
+                    const destY = ty * this.tileSize - startPixelY;
 
-    _initWeatherParticles: function () {
-        this.weatherParticles = [];
-        const count = 75;
-        const glyphs = ['0', '1', '7', '9', '∆', '◊', 'λ', 'Ω', 'Ψ', 'Ξ'];
-
-        for (let i = 0; i < count; i++) {
-            this.weatherParticles.push({
-                x: Math.random() * 1920,
-                y: Math.random() * 1080,
-                vx: (Math.random() - 0.5) * 40,
-                vy: 20 + Math.random() * 60,
-                size: 2 + Math.random() * 4,
-                alpha: 0.35 + Math.random() * 0.6,
-                phase: Math.random() * Math.PI * 2,
-                spinSpeed: (Math.random() - 0.5) * 3,
-                glyph: glyphs[i % glyphs.length]
-            });
-        }
-        this._lastWeatherTime = performance.now() * 0.001;
-    },
-
-    _isTileWalkable: function (tx, ty) {
-        if (!this._initialized) this.init();
-
-        if (tx < 0 || tx >= this.cols || ty < 0 || ty >= this.rows) {
-            return false;
-        }
-
-        const timeline = (window.Game.state && window.Game.state.timeline) || 'PRESENT';
-        const isTreePlanted = !!(window.Game.state && window.Game.state.isTreePlanted);
-
-        if (ty === this.ABYSS_ROW) {
-            if (tx === this.BRIDGE_TILE.x && timeline === 'PAST') {
-                return true;
+                    this._drawTilePrimitive(ctx, tileType, destX, destY, era, tx, ty);
+                }
             }
-            if (
-                tx === this.TREE_BRIDGE_TILE.x &&
-                isTreePlanted &&
-                (timeline === 'PRESENT' || timeline === 'FUTURE')
-            ) {
-                return true;
+        }
+
+        _drawTilePrimitive(ctx, type, x, y, era, tx, ty) {
+            const S = this.tileSize;
+            const T = WORLD_CONSTANTS.TERRAIN_TYPES;
+
+            switch (type) {
+                case T.VOID:
+                    ctx.fillStyle = "#050508";
+                    ctx.fillRect(x, y, S, S);
+                    break;
+
+                case T.GRASS:
+                    ctx.fillStyle = "#2d5a27";
+                    ctx.fillRect(x, y, S, S);
+                    ctx.fillStyle = "#3a7332";
+                    if ((tx + ty) % 2 === 0) {
+                        ctx.fillRect(x + 12, y + 16, 6, 8);
+                        ctx.fillRect(x + 36, y + 42, 5, 7);
+                    }
+                    break;
+
+                case T.STONE_PATH:
+                    ctx.fillStyle = "#4a4e51";
+                    ctx.fillRect(x, y, S, S);
+                    ctx.strokeStyle = "#35383a";
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(x + 2, y + 2, S - 4, S - 4);
+                    break;
+
+                case T.WATER:
+                    ctx.fillStyle = "#1d3557";
+                    ctx.fillRect(x, y, S, S);
+                    ctx.fillStyle = "#457b9d";
+                    ctx.fillRect(x + 8, y + 28, S - 16, 4);
+                    break;
+
+                case T.HEALING_WATER:
+                    ctx.fillStyle = "#0077b6";
+                    ctx.fillRect(x, y, S, S);
+                    ctx.fillStyle = "rgba(72, 202, 228, 0.4)";
+                    ctx.fillRect(x + 4, y + 4, S - 8, S - 8);
+                    break;
+
+                case T.ANCIENT_RUINS:
+                    ctx.fillStyle = "#5c4d3c";
+                    ctx.fillRect(x, y, S, S);
+                    ctx.fillStyle = "#7f6a52";
+                    ctx.fillRect(x + 10, y + 10, S - 20, S - 20);
+                    break;
+
+                case T.CURSED_SOIL:
+                    ctx.fillStyle = "#240046";
+                    ctx.fillRect(x, y, S, S);
+                    ctx.fillStyle = "#3c096c";
+                    if ((tx * 3 + ty) % 5 === 0) {
+                        ctx.fillRect(x + 16, y + 20, 14, 14);
+                    }
+                    break;
+
+                case T.CYBER_TILE:
+                    ctx.fillStyle = "#111927";
+                    ctx.fillRect(x, y, S, S);
+                    ctx.strokeStyle = "#1f3a5f";
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(x, y, S, S);
+                    if ((tx + ty) % 3 === 0) {
+                        ctx.fillStyle = "#00f0ff22";
+                        ctx.fillRect(x + 8, y + 8, S - 16, 2);
+                    }
+                    break;
+
+                case T.ZERO_G_GROUND:
+                    ctx.fillStyle = "#1b1938";
+                    ctx.fillRect(x, y, S, S);
+                    ctx.fillStyle = "#2d2459";
+                    ctx.fillRect(x + 14, y + 14, S - 28, S - 28);
+                    break;
+
+                case T.LAVA:
+                    ctx.fillStyle = "#9d0208";
+                    ctx.fillRect(x, y, S, S);
+                    ctx.fillStyle = "#dc2f02";
+                    ctx.fillRect(x + 10, y + 10, S - 20, S - 20);
+                    break;
+
+                default:
+                    ctx.fillStyle = "#1c1c1c";
+                    ctx.fillRect(x, y, S, S);
+                    break;
             }
-            return false;
         }
 
-        const cell = this.grid[ty][tx];
-        return cell === 0;
-    },
+        /* ---------------------------------------------------------------------- */
+        /* CHUYỂN ĐỔI KỶ NGUYÊN (QUÁ KHỨ - HIỆN TẠI - TƯƠNG LAI)                   */
+        /* ---------------------------------------------------------------------- */
+        setEra(targetEra) {
+            if (!WORLD_CONSTANTS.ERAS[targetEra] || this.currentEra === targetEra) return;
+            this.targetEra = targetEra;
+            this.currentEra = targetEra;
+            if (window.Game.state) {
+                window.Game.state.currentEra = targetEra;
+                window.Game.state.timeline = targetEra;
+            }
 
-    canMoveTo: function (px, py) {
-        if (!this._initialized) this.init();
+            this.addCameraShake(7.5, 0.45);
 
-        const playerRadius = (window.Game.player && window.Game.player.radius) || 20;
+            if (this.eternityTree) {
+                if (this.currentEra === WORLD_CONSTANTS.ERAS.PAST) {
+                    this.eternityTree.growthStage = 0;
+                } else if (this.currentEra === WORLD_CONSTANTS.ERAS.PRESENT) {
+                    this.eternityTree.growthStage = 1;
+                } else if (this.currentEra === WORLD_CONSTANTS.ERAS.FUTURE) {
+                    this.eternityTree.growthStage = 2;
+                    if (this.eternityTree.isPlanted && !this.eternityTree.fruitHarvested) {
+                        this.eternityTree.hasFruit = true;
+                    }
+                }
+            }
 
-        if (
-            px - playerRadius < 0 ||
-            px + playerRadius >= this.width ||
-            py - playerRadius < 0 ||
-            py + playerRadius >= this.height
-        ) {
-            return false;
+            for (let i = 0; i < this.autoTurrets.length; i++) {
+                const turret = this.autoTurrets[i];
+                turret.target = null;
+                turret.laserBeamVisual = null;
+            }
         }
 
-        const footMargin = Math.min(12, playerRadius * 0.55);
-        const checkPoints = [
-            { x: px, y: py },
-            { x: px - footMargin, y: py - footMargin },
-            { x: px + footMargin, y: py - footMargin },
-            { x: px - footMargin, y: py + footMargin },
-            { x: px + footMargin, y: py + footMargin }
-        ];
-
-        for (let i = 0; i < checkPoints.length; i++) {
-            const pt = checkPoints[i];
-            const tx = Math.floor(pt.x / this.tileSize);
-            const ty = Math.floor(pt.y / this.tileSize);
-            if (!this._isTileWalkable(tx, ty)) {
+        /* ---------------------------------------------------------------------- */
+        /* KIỂM TRA TỌA ĐỘ AN TOÀN VÀ VA CHẠM DI CHUYỂN                          */
+        /* ---------------------------------------------------------------------- */
+        canMoveTo(x, y, radius = 18) {
+            if (x - radius < 64 || x + radius > this.width - 64 ||
+                y - radius < 64 || y + radius > this.height - 64) {
                 return false;
             }
-        }
 
-        return true;
-    },
+            const minTx = Math.floor((x - radius) / this.tileSize);
+            const maxTx = Math.floor((x + radius) / this.tileSize);
+            const minTy = Math.floor((y - radius) / this.tileSize);
+            const maxTy = Math.floor((y + radius) / this.tileSize);
 
-    ensureSafePlayerPosition: function () {
-        if (!this._initialized) this.init();
+            for (let ty = minTy; ty <= maxTy; ty++) {
+                for (let tx = minTx; tx <= maxTx; tx++) {
+                    if (tx < 0 || tx >= this.cols || ty < 0 || ty >= this.rows) return false;
+                    const idx = ty * this.cols + tx;
+                    if (this.collisionMap[idx] === 1) {
+                        const tileLeft = tx * this.tileSize;
+                        const tileRight = tileLeft + this.tileSize;
+                        const tileTop = ty * this.tileSize;
+                        const tileBottom = tileTop + this.tileSize;
 
-        const player = window.Game.player;
-        if (!player || typeof player.x !== 'number' || typeof player.y !== 'number') {
-            return false;
-        }
+                        const closestX = Math.max(tileLeft, Math.min(x, tileRight));
+                        const closestY = Math.max(tileTop, Math.min(y, tileBottom));
 
-        if (this.canMoveTo(player.x, player.y)) {
+                        const dx = x - closestX;
+                        const dy = y - closestY;
+                        if ((dx * dx + dy * dy) < (radius * radius)) {
+                            return false;
+                        }
+                    }
+                }
+            }
+
             return true;
         }
 
-        const startX = player.x;
-        const startY = player.y;
-        const ts = this.tileSize;
-        const currentTileY = Math.floor(startY / ts);
+        ensureSafePlayerPosition(player) {
+            const p = player || window.Game.player;
+            if (!p) return;
+            if (this.canMoveTo(p.x, p.y, p.radius || 20)) return;
 
-        if (currentTileY === this.ABYSS_ROW) {
-            const southY = (this.ABYSS_ROW + 1) * ts + ts / 2;
-            const northY = (this.ABYSS_ROW - 1) * ts + ts / 2;
-            const preferNorth = startY - this.ABYSS_ROW * ts < ts / 2;
-            const primaryY = preferNorth ? northY : southY;
-            const secondaryY = preferNorth ? southY : northY;
-
-            if (this.canMoveTo(startX, primaryY)) {
-                this._relocatePlayerSafely(player, startX, primaryY);
-                return true;
-            }
-            if (this.canMoveTo(startX, secondaryY)) {
-                this._relocatePlayerSafely(player, startX, secondaryY);
-                return true;
-            }
-        }
-
-        const maxRadius = ts * 8;
-        const radiusStep = 8;
-        const angleSteps = 24;
-
-        for (let r = radiusStep; r <= maxRadius; r += radiusStep) {
-            for (let i = 0; i < angleSteps; i++) {
-                const angle = (i / angleSteps) * Math.PI * 2 + r * 0.05;
-                const testX = startX + Math.cos(angle) * r;
-                const testY = startY + Math.sin(angle) * r;
-
-                if (this.canMoveTo(testX, testY)) {
-                    this._relocatePlayerSafely(player, testX, testY);
-                    return true;
-                }
-            }
-        }
-
-        const startTileX = Math.floor(startX / ts);
-        for (let dist = 1; dist <= 12; dist++) {
-            for (let dy = -dist; dy <= dist; dy++) {
-                for (let dx = -dist; dx <= dist; dx++) {
-                    if (Math.abs(dx) !== dist && Math.abs(dy) !== dist) continue;
-                    const tx = startTileX + dx;
-                    const ty = currentTileY + dy;
-                    if (this._isTileWalkable(tx, ty)) {
-                        const centerX = tx * ts + ts / 2;
-                        const centerY = ty * ts + ts / 2;
-                        if (this.canMoveTo(centerX, centerY)) {
-                            this._relocatePlayerSafely(player, centerX, centerY);
-                            return true;
+            let step = 32;
+            for (let ring = 1; ring <= 10; ring++) {
+                for (let i = -ring; i <= ring; i++) {
+                    for (let j = -ring; j <= ring; j++) {
+                        const testX = p.x + i * step;
+                        const testY = p.y + j * step;
+                        if (this.canMoveTo(testX, testY, p.radius || 20)) {
+                            p.x = testX;
+                            p.y = testY;
+                            return;
                         }
                     }
                 }
             }
+
+            p.x = 2048;
+            p.y = 2140;
         }
 
-        this._relocatePlayerSafely(player, this.waypoints[0].x, this.waypoints[0].y);
-        return true;
-    },
+        /* ---------------------------------------------------------------------- */
+        /* TRUY VẤN VÙNG VÀ HIỆU ỨNG ĐẶC BIỆT CỦA ĐỊA HÌNH TẠI (X, Y)             */
+        /* ---------------------------------------------------------------------- */
+        getTerrainEffectAt(x, y) {
+            const result = {
+                inZeroGravity: false,
+                inCursedGround: false,
+                inHealingSpring: false,
+                speedMultiplier: 1.0,
+                damageMultiplier: 1.0,
+                expMultiplier: 1.0,
+                attackRangeMultiplier: 1.0,
+                projectileSpeedMultiplier: 1.0
+            };
 
-    _relocatePlayerSafely: function (player, safeX, safeY) {
-        player.x = safeX;
-        player.y = safeY;
+            for (let i = 0; i < this.zeroGravityZones.length; i++) {
+                const zg = this.zeroGravityZones[i];
+                const distSq = (x - zg.x) * (x - zg.x) + (y - zg.y) * (y - zg.y);
+                if (distSq <= zg.radius * zg.radius) {
+                    result.inZeroGravity = true;
+                    result.attackRangeMultiplier += zg.attackRangeBonus;
+                    result.projectileSpeedMultiplier += zg.projectileSpeedBonus;
+                    result.speedMultiplier *= 1.15;
+                    break;
+                }
+            }
 
-        if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
-            window.Game.Combat.spawnFloatingText(safeX, safeY - 28, 'Dịch chuyển về bờ an toàn!', '#00f5ff');
-        } else if (window.Game.Systems && typeof window.Game.Systems.notify === 'function') {
-            window.Game.Systems.notify('Dịch chuyển về bờ an toàn!', '#00f5ff');
-        }
-    },
+            for (let i = 0; i < this.cursedGrounds.length; i++) {
+                const cg = this.cursedGrounds[i];
+                const distSq = (x - cg.x) * (x - cg.x) + (y - cg.y) * (y - cg.y);
+                if (distSq <= cg.radius * cg.radius) {
+                    result.inCursedGround = true;
+                    result.expMultiplier *= cg.expMultiplier;
+                    break;
+                }
+            }
 
-    _checkAutoUnlockWaypoints: function (px, py) {
-        const state = window.Game.state;
-        if (!state) return;
-
-        if (!Array.isArray(state.unlockedWaypoints)) {
-            state.unlockedWaypoints = [true, false, false];
-        }
-
-        const unlockRadius = 120;
-        for (let i = 0; i < this.waypoints.length; i++) {
-            const wp = this.waypoints[i];
-            if (!state.unlockedWaypoints[wp.index]) {
-                const dist = Math.hypot(px - wp.x, py - wp.y);
-                if (dist <= unlockRadius) {
-                    state.unlockedWaypoints[wp.index] = true;
-                    if (window.Game.Systems && typeof window.Game.Systems.notify === 'function') {
-                        window.Game.Systems.notify(
-                            'Đã mở khóa Cổng Dịch Chuyển: ' + wp.name + '!',
-                            '#00ffcc'
-                        );
+            if (this.currentEra === WORLD_CONSTANTS.ERAS.PRESENT) {
+                for (let i = 0; i < this.healingSprings.length; i++) {
+                    const hs = this.healingSprings[i];
+                    const distSq = (x - hs.x) * (x - hs.x) + (y - hs.y) * (y - hs.y);
+                    if (distSq <= hs.radius * hs.radius) {
+                        result.inHealingSpring = true;
+                        result.healPerSecond = hs.healPerSecond;
+                        result.shieldPerSecond = hs.shieldPerSecond;
+                        break;
                     }
                 }
             }
+
+            return result;
         }
-    },
 
-    // ========================================================================
-    // TÍNH NĂNG 3: TƯƠNG TÁC & KÍCH HOẠT KHE NỨT THỜI GIAN / BẪY MÔI TRƯỜNG
-    // ========================================================================
-    triggerTimeRift: function (riftId) {
-        const rift = this.timeRifts.find(r => r.id === riftId);
-        if (!rift || rift.currentCooldown > 0 || rift.isTriggered) return false;
+        isPlayerInCursedGround(player) {
+            const p = player || window.Game.player;
+            if (!p || typeof p.x !== 'number') return false;
+            for (let i = 0; i < this.cursedGrounds.length; i++) {
+                const cg = this.cursedGrounds[i];
+                const dx = p.x - cg.x;
+                const dy = p.y - cg.y;
+                if (dx * dx + dy * dy <= cg.radius * cg.radius) return true;
+            }
+            return false;
+        }
 
-        rift.isTriggered = true;
-        rift.activeTimer = rift.activeDuration;
-        rift.currentCooldown = rift.cooldown;
-        rift.shockwaveR = 10;
+        toggleMinimapZoom() {
+            this.minimapExpanded = !this.minimapExpanded;
+            if (window.Game.state) {
+                window.Game.state.minimapExpanded = this.minimapExpanded;
+            }
+        }
 
-        const enemies = this._getActiveEnemiesList();
+        /* ---------------------------------------------------------------------- */
+        /* TƯƠNG TÁC THỰC THỂ GẦN NHẤT                                            */
+        /* ---------------------------------------------------------------------- */
+        getNearbyInteractable(x, y, radius = WORLD_CONSTANTS.INTERACTION_RADIUS) {
+            let closest = null;
+            let minDistSq = radius * radius;
 
-        if (rift.type === 'TIME_SLOW') {
-            // Làm chậm diện rộng 70% tốc độ quái vật xung quanh
-            for (let i = 0; i < enemies.length; i++) {
-                const e = enemies[i];
-                if (!e || e.dead || e.isDead || (typeof e.hp === 'number' && e.hp <= 0)) continue;
-                if (Math.hypot(e.x - rift.x, e.y - rift.y) <= rift.radius) {
-                    e.slowTimer = 5.0;
-                    e.speedDebuff = 0.3; // Chậm 70%
-                    if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
-                        window.Game.Combat.spawnFloatingText(e.x, e.y - 20, '⏳ LÀM CHẬM 70%!', '#38bdf8');
+            for (let i = 0; i < this.shrines.length; i++) {
+                const s = this.shrines[i];
+                const dSq = (x - s.x) * (x - s.x) + (y - s.y) * (y - s.y);
+                if (dSq < minDistSq) {
+                    minDistSq = dSq;
+                    closest = { type: "SHRINE", data: s, distance: Math.sqrt(dSq) };
+                }
+            }
+
+            for (let i = 0; i < this.riftPortals.length; i++) {
+                const p = this.riftPortals[i];
+                const dSq = (x - p.x) * (x - p.x) + (y - p.y) * (y - p.y);
+                if (dSq < minDistSq && p.cooldown <= 0) {
+                    minDistSq = dSq;
+                    closest = { type: "PORTAL", data: p, distance: Math.sqrt(dSq) };
+                }
+            }
+
+            if (this.eternityTree) {
+                const et = this.eternityTree;
+                const dSq = (x - et.x) * (x - et.x) + (y - et.y) * (y - et.y);
+                if (dSq < minDistSq) {
+                    if (this.currentEra === WORLD_CONSTANTS.ERAS.PAST && !et.isPlanted) {
+                        minDistSq = dSq;
+                        closest = { type: "TREE_PLANT", data: et, distance: Math.sqrt(dSq) };
+                    } else if (this.currentEra === WORLD_CONSTANTS.ERAS.FUTURE && et.hasFruit) {
+                        minDistSq = dSq;
+                        closest = { type: "FRUIT_HARVEST", data: et, distance: Math.sqrt(dSq) };
                     }
                 }
             }
+
+            if (this.currentEra === WORLD_CONSTANTS.ERAS.FUTURE) {
+                for (let i = 0; i < this.autoTurrets.length; i++) {
+                    const turret = this.autoTurrets[i];
+                    if (!turret.isRepaired) {
+                        const dSq = (x - turret.x) * (x - turret.x) + (y - turret.y) * (y - turret.y);
+                        if (dSq < minDistSq) {
+                            minDistSq = dSq;
+                            closest = { type: "TURRET_REPAIR", data: turret, distance: Math.sqrt(dSq) };
+                        }
+                    }
+                }
+            }
+
+            for (let i = 0; i < this.spikeTraps.length; i++) {
+                const trap = this.spikeTraps[i];
+                const lever = trap.lever;
+                const dSq = (x - lever.x) * (x - lever.x) + (y - lever.y) * (y - lever.y);
+                if (dSq < minDistSq) {
+                    minDistSq = dSq;
+                    closest = { type: "TRAP_LEVER", data: trap, distance: Math.sqrt(dSq) };
+                }
+            }
+
+            if (this.paradoxVault) {
+                const seal = this.paradoxVault.pillarSeals[this.currentEra];
+                if (seal && !seal.activated) {
+                    const dSq = (x - seal.x) * (x - seal.x) + (y - seal.y) * (y - seal.y);
+                    if (dSq < minDistSq) {
+                        minDistSq = dSq;
+                        closest = { type: "PARADOX_SEAL", data: seal, distance: Math.sqrt(dSq) };
+                    }
+                }
+
+                const pv = this.paradoxVault;
+                const dSqVault = (x - pv.x) * (x - pv.x) + (y - pv.y) * (y - pv.y);
+                if (dSqVault < minDistSq && pv.isUnlocked && !pv.isOpened) {
+                    minDistSq = dSqVault;
+                    closest = { type: "PARADOX_VAULT", data: pv, distance: Math.sqrt(dSqVault) };
+                }
+            }
+
+            return closest;
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* XỬ LÝ KÍCH HOẠT HÀNH ĐỘNG TƯƠNG TÁC                                     */
+        /* ---------------------------------------------------------------------- */
+        interact(player) {
+            const p = player || window.Game.player;
+            if (!p) return false;
+            const interactable = this.getNearbyInteractable(p.x, p.y);
+            if (!interactable) return false;
+
+            switch (interactable.type) {
+                case "SHRINE":
+                    return this._activateShrine(interactable.data, p);
+
+                case "PORTAL":
+                    return this._useRiftPortal(interactable.data, p);
+
+                case "TREE_PLANT":
+                    return this._plantEternityTree(interactable.data, p);
+
+                case "FRUIT_HARVEST":
+                    return this._harvestFruitOfEternity(interactable.data, p);
+
+                case "TURRET_REPAIR":
+                    return this._repairAutoTurret(interactable.data, p);
+
+                case "TRAP_LEVER":
+                    return this._toggleSpikeTrapReversal(interactable.data, p);
+
+                case "PARADOX_SEAL":
+                    return this._activateParadoxSeal(interactable.data, p);
+
+                case "PARADOX_VAULT":
+                    return this._openParadoxVault(interactable.data, p);
+
+                default:
+                    return false;
+            }
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* IV.1: THỰC THI ĐÀI CẦU NGUYỆN NHÂN QUẢ                                 */
+        /* ---------------------------------------------------------------------- */
+        _activateShrine(shrine, player) {
+            if (shrine.cooldown > 0) {
+                if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                    window.Game.Combat.spawnFloatingText(shrine.x, shrine.y - 40, `Đang nạp năng lượng (${Math.ceil(shrine.cooldown)}s)`, "#aaaaaa");
+                }
+                return false;
+            }
+
+            shrine.cooldown = shrine.maxCooldown;
+            shrine.activeBeamTimer = 2.2;
+
+            if (shrine.buffType === "DAMAGE_BOOST") {
+                if (typeof player.addBuff === "function") {
+                    player.addBuff({
+                        id: "shrine_war_boost",
+                        name: "Thần Lực Nhân Quả (+50% Sát Thương)",
+                        duration: shrine.buffDuration,
+                        statModifiers: { damageMultiplier: 1.50 },
+                        color: "#ff3b30"
+                    });
+                }
+            } else if (shrine.buffType === "INVULNERABILITY") {
+                if (typeof player.addBuff === "function") {
+                    player.addBuff({
+                        id: "shrine_immortal_boost",
+                        name: "Kim Thân Bất Hoại (Bất Tử 10s)",
+                        duration: shrine.buffDuration,
+                        statModifiers: { isInvulnerable: true },
+                        color: "#ffd60a"
+                    });
+                }
+            } else if (shrine.buffType === "COOLDOWN_REDUCTION") {
+                if (typeof player.addBuff === "function") {
+                    player.addBuff({
+                        id: "shrine_space_boost",
+                        name: "Gia Tốc Hư Không (-30% Hồi Chiêu)",
+                        duration: shrine.buffDuration,
+                        statModifiers: { cooldownReduction: 0.30 },
+                        color: "#00f0ff"
+                    });
+                }
+                player.shield = Math.min(player.maxShield || 100, (player.shield || 0) + 50);
+            }
+
+            this.addCameraShake(4.0, 0.3);
+
             if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
-                window.Game.Combat.spawnFloatingText(rift.x, rift.y - 40, '⚡ TRƯỜNG LỰC TRÌ HOÃN KÍCH HOẠT!', '#00f5ff');
+                window.Game.Combat.spawnFloatingText(player.x, player.y - 50, `KÍCH HOẠT: ${shrine.name.toUpperCase()}!`, shrine.color);
             }
-        } else if (rift.type === 'VORTEX_EXPLODE') {
-            // Nổ tung diện rộng gây sát thương hủy diệt lên quái
-            for (let i = 0; i < enemies.length; i++) {
-                const e = enemies[i];
-                if (!e || e.dead || e.isDead || (typeof e.hp === 'number' && e.hp <= 0)) continue;
-                const dist = Math.hypot(e.x - rift.x, e.y - rift.y);
-                if (dist <= rift.radius) {
-                    const dmg = Math.round(180 * (1 - dist / (rift.radius * 1.5)));
-                    if (typeof e.takeDamage === 'function') {
-                        e.takeDamage(dmg, true);
-                    } else if (typeof e.hp === 'number') {
-                        e.hp -= dmg;
+
+            return true;
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* IV.2: THỰC THI CỔNG DỊCH CHUYỂN TỨC THỜI (RIFT PORTAL)                 */
+        /* ---------------------------------------------------------------------- */
+        _useRiftPortal(portal, player) {
+            if (portal.cooldown > 0) return false;
+
+            player.x = portal.targetX;
+            player.y = portal.targetY;
+
+            portal.cooldown = portal.maxCooldown;
+            const targetPortal = this.riftPortals.find(p => p.id === portal.pairId);
+            if (targetPortal) {
+                targetPortal.cooldown = targetPortal.maxCooldown;
+            }
+
+            this.addCameraShake(5.0, 0.25);
+
+            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                window.Game.Combat.spawnFloatingText(player.x, player.y - 45, "🌀 DỊCH CHUYỂN TỨC THỜI!", portal.color);
+            }
+
+            return true;
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* IV.4: CÂY NHÂN QUẢ: TRỒNG Ở QUÁ KHỨ & HÁI Ở TƯƠNG LAI                  */
+        /* ---------------------------------------------------------------------- */
+        _plantEternityTree(tree, player) {
+            if (this.currentEra !== WORLD_CONSTANTS.ERAS.PAST) return false;
+
+            tree.isPlanted = true;
+            if (window.Game.state) {
+                window.Game.state.isTreePlanted = true;
+            }
+
+            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                window.Game.Combat.spawnFloatingText(tree.x, tree.y - 50, "🌱 ĐÃ GIEO MẦM CÂY NHÂN QUẢ!", "#70e000");
+            }
+
+            return true;
+        }
+
+        _harvestFruitOfEternity(tree, player) {
+            if (this.currentEra !== WORLD_CONSTANTS.ERAS.FUTURE || !tree.hasFruit) return false;
+
+            tree.hasFruit = false;
+            tree.fruitHarvested = true;
+
+            if (window.Game.state) {
+                window.Game.state.bonusMaxHp = (window.Game.state.bonusMaxHp || 0) + 10;
+            }
+            player.maxHp = (player.baseMaxHp || 100) + (window.Game.state ? window.Game.state.bonusMaxHp : 10);
+            player.hp = Math.min(player.maxHp, player.hp + 50);
+
+            this.addCameraShake(4.5, 0.35);
+
+            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                window.Game.Combat.spawnFloatingText(player.x, player.y - 50, "🍎 QUẢ VĨNH HẰNG: +10 MAX HP VĨNH VIỄN!", "#ff4d6d");
+            }
+
+            return true;
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* IV.6: SỬA CHỮA TRỤ PHÁO LASER TỰ ĐỘNG                                  */
+        /* ---------------------------------------------------------------------- */
+        _repairAutoTurret(turret, player) {
+            if (turret.isRepaired) return false;
+
+            const playerGold = player.gold || (window.Game.state ? window.Game.state.gold : 0) || 0;
+            if (playerGold < turret.repairCost) {
+                if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                    window.Game.Combat.spawnFloatingText(turret.x, turret.y - 40, `Cần ${turret.repairCost} Vàng để sửa!`, "#ff4444");
+                }
+                return false;
+            }
+
+            if (typeof player.spendGold === "function") {
+                player.spendGold(turret.repairCost);
+            } else if (window.Game.state) {
+                window.Game.state.gold = Math.max(0, playerGold - turret.repairCost);
+                player.gold = window.Game.state.gold;
+            }
+
+            turret.isRepaired = true;
+            this.addCameraShake(3.0, 0.2);
+
+            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                window.Game.Combat.spawnFloatingText(turret.x, turret.y - 50, "⚡ ĐÃ SỬA CHỮA TRỤ LASER TỰ ĐỘNG!", "#00f0ff");
+            }
+
+            return true;
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* IV.7: GẠT CÔNG TẮC ĐẢO CHIỀU BẪY ĐINH (SANG SÁT THƯƠNG QUÁI)           */
+        /* ---------------------------------------------------------------------- */
+        _toggleSpikeTrapReversal(trap, player) {
+            trap.isReversed = !trap.isReversed;
+            trap.lever.isActivated = trap.isReversed;
+
+            const statusText = trap.isReversed ? "🛡️ BẪY ĐINH: ĐẢO CHIỀU DIỆT QUÁI!" : "⚠️ BẪY ĐINH: CHẾ ĐỘ THƯỜNG!";
+            const statusColor = trap.isReversed ? "#00ff88" : "#ff3333";
+
+            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                window.Game.Combat.spawnFloatingText(trap.lever.x, trap.lever.y - 40, statusText, statusColor);
+            }
+
+            return true;
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* IV.8: KÍCH HOẠT ẤN KÝ VÀ MỞ RƯƠNG BÁU NGHỊCH LÝ (PARADOX VAULT)        */
+        /* ---------------------------------------------------------------------- */
+        _activateParadoxSeal(seal, player) {
+            if (seal.activated) return false;
+
+            seal.activated = true;
+            if (window.Game.state) {
+                window.Game.state.paradoxSeals = window.Game.state.paradoxSeals || {};
+                window.Game.state.paradoxSeals[this.currentEra] = true;
+            }
+
+            this.addCameraShake(5.0, 0.3);
+
+            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                window.Game.Combat.spawnFloatingText(seal.x, seal.y - 45, `✨ ĐÃ GIẢI ẤN KÝ: ${seal.name.toUpperCase()}!`, seal.color);
+            }
+
+            const seals = this.paradoxVault.pillarSeals;
+            if (seals.PAST.activated && seals.PRESENT.activated && seals.FUTURE.activated) {
+                this.paradoxVault.isUnlocked = true;
+                if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                    window.Game.Combat.spawnFloatingText(this.paradoxVault.x, this.paradoxVault.y - 60, "🔓 RƯƠNG NGHỊCH LÝ ĐÃ MỞ KHÓA TẠI KHU TRUNG TÂM!", "#ffd700");
+                }
+            }
+
+            return true;
+        }
+
+        _openParadoxVault(vault, player) {
+            if (!vault.isUnlocked || vault.isOpened) return false;
+
+            vault.isOpened = true;
+            vault.unlockedAnimationTimer = 3.0;
+
+            const bonusGold = 1000;
+            if (typeof player.addGold === "function") {
+                player.addGold(bonusGold);
+            } else if (window.Game.state) {
+                window.Game.state.gold = (window.Game.state.gold || 0) + bonusGold;
+                player.gold = window.Game.state.gold;
+            }
+
+            if (player.inventory && typeof player.inventory.addMythicWeapon === "function") {
+                player.inventory.addMythicWeapon("void_scythe_mythic");
+            }
+
+            this.addCameraShake(10.0, 0.7);
+
+            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                window.Game.Combat.spawnFloatingText(vault.x, vault.y - 70, "👑 MỞ RƯƠNG NGHỊCH LÝ: NHẬN VŨ KHÍ THẦN THOẠI & 1000 VÀNG!", "#ffd700");
+            }
+
+            return true;
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* CẬP NHẬT TRẠNG THÁI TOÀN BỘ THẾ GIỚI (DT: DELTA TIME)                  */
+        /* ---------------------------------------------------------------------- */
+        update(dt, player, enemies = [], projectiles = [], particles = null) {
+            const p = player || window.Game.player;
+            const ens = enemies.length > 0 ? enemies : ((window.Game.Enemies && window.Game.Enemies.list) || []);
+
+            if (this.cameraShake.duration > 0) {
+                this.cameraShake.duration -= dt;
+                const progress = Math.max(0, this.cameraShake.duration);
+                this.cameraShake.x = (Math.random() - 0.5) * 2 * this.cameraShake.intensity * progress;
+                this.cameraShake.y = (Math.random() - 0.5) * 2 * this.cameraShake.intensity * progress;
+                if (this.cameraShake.duration <= 0) {
+                    this.cameraShake.x = 0;
+                    this.cameraShake.y = 0;
+                }
+            }
+
+            if (window.Game.state && window.Game.state.isTreePlanted && this.eternityTree) {
+                this.eternityTree.isPlanted = true;
+            }
+
+            if (window.Game.state && window.Game.state.paradoxSeals && this.paradoxVault) {
+                if (window.Game.state.paradoxSeals.PAST) this.paradoxVault.pillarSeals.PAST.activated = true;
+                if (window.Game.state.paradoxSeals.PRESENT) this.paradoxVault.pillarSeals.PRESENT.activated = true;
+                if (window.Game.state.paradoxSeals.FUTURE) this.paradoxVault.pillarSeals.FUTURE.activated = true;
+                if (this.paradoxVault.pillarSeals.PAST.activated &&
+                    this.paradoxVault.pillarSeals.PRESENT.activated &&
+                    this.paradoxVault.pillarSeals.FUTURE.activated) {
+                    this.paradoxVault.isUnlocked = true;
+                }
+            }
+
+            this._updateTemporalShrines(dt);
+            this._updateRiftPortals(dt, p);
+            this._updateTemporalStorms(dt, p, ens);
+            this._updateHealingSprings(dt, p);
+            this._updateAutoTurrets(dt, ens, projectiles);
+            this._updateSpikeTraps(dt, p, ens);
+            this._updateParadoxVault(dt);
+            this._updateWeatherAndFloatingRocks(dt);
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* HÀM PHỤ TRỢ: THÊM RUNG CHẤN MÀN HÌNH                                   */
+        /* ---------------------------------------------------------------------- */
+        addCameraShake(intensity, duration) {
+            this.cameraShake.intensity = Math.max(this.cameraShake.intensity, intensity);
+            this.cameraShake.duration = Math.max(this.cameraShake.duration, duration);
+        }
+/* ---------------------------------------------------------------------- */
+        /* CẬP NHẬT IV.1: ĐÀI CẦU NGUYỆN NHÂN QUẢ (SHRINES UPDATE)                */
+        /* ---------------------------------------------------------------------- */
+        _updateTemporalShrines(dt) {
+            for (let i = 0; i < this.shrines.length; i++) {
+                const s = this.shrines[i];
+                if (s.cooldown > 0) {
+                    s.cooldown = Math.max(0, s.cooldown - dt);
+                }
+                if (s.activeBeamTimer > 0) {
+                    s.activeBeamTimer = Math.max(0, s.activeBeamTimer - dt);
+                }
+                s.runeAngle = (s.runeAngle + dt * 1.2) % (Math.PI * 2);
+            }
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* CẬP NHẬT IV.2: CỔNG DỊCH CHUYỂN TỨC THỜI (RIFT PORTALS UPDATE)        */
+        /* ---------------------------------------------------------------------- */
+        _updateRiftPortals(dt, player) {
+            for (let i = 0; i < this.riftPortals.length; i++) {
+                const p = this.riftPortals[i];
+                if (p.cooldown > 0) {
+                    p.cooldown = Math.max(0, p.cooldown - dt);
+                }
+                p.vortexRotation = (p.vortexRotation + dt * 2.8) % (Math.PI * 2);
+                p.pulsePhase = (p.pulsePhase + dt * 3.5) % (Math.PI * 2);
+
+                if (player && p.cooldown <= 0) {
+                    const dx = player.x - p.x;
+                    const dy = player.y - p.y;
+                    if (dx * dx + dy * dy <= 22 * 22) {
+                        this._useRiftPortal(p, player);
+                    }
+                }
+            }
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* CẬP NHẬT IV.3: BÃO SẤM SÉT THỜI KHÔNG (TEMPORAL STORMS UPDATE)         */
+        /* ---------------------------------------------------------------------- */
+        _updateTemporalStorms(dt, player, enemies) {
+            this.stormTimer += dt;
+            if (this.stormTimer >= this.stormInterval) {
+                this.stormTimer = 0;
+                this._spawnTemporalStormCluster(player);
+            }
+
+            for (let i = this.storms.length - 1; i >= 0; i--) {
+                const storm = this.storms[i];
+                storm.timer += dt;
+
+                if (storm.state === "WARNING") {
+                    storm.warningProgress = Math.min(1.0, storm.timer / storm.warningDuration);
+                    if (storm.timer >= storm.warningDuration) {
+                        storm.state = "STRIKE";
+                        storm.timer = 0;
+                        this._executeStormStrike(storm, player, enemies);
+                    }
+                } else if (storm.state === "STRIKE") {
+                    storm.strikeProgress = Math.min(1.0, storm.timer / storm.strikeDuration);
+                    if (storm.timer >= storm.strikeDuration) {
+                        this.storms.splice(i, 1);
+                    }
+                }
+            }
+        }
+
+        _spawnTemporalStormCluster(player) {
+            const stormCount = 3 + Math.floor(Math.random() * 3);
+            const anchorX = player ? player.x : 2048;
+            const anchorY = player ? player.y : 2048;
+
+            for (let i = 0; i < stormCount; i++) {
+                const offsetAngle = Math.random() * Math.PI * 2;
+                const offsetDist = 120 + Math.random() * 480;
+                const stormX = Math.max(128, Math.min(this.width - 128, anchorX + Math.cos(offsetAngle) * offsetDist));
+                const stormY = Math.max(128, Math.min(this.height - 128, anchorY + Math.sin(offsetAngle) * offsetDist));
+
+                this.storms.push({
+                    x: stormX,
+                    y: stormY,
+                    radius: 80 + Math.random() * 40,
+                    state: "WARNING",
+                    timer: 0,
+                    warningDuration: 1.2,
+                    strikeDuration: 0.45,
+                    warningProgress: 0,
+                    strikeProgress: 0,
+                    damage: 85,
+                    color: "#00f0ff",
+                    arcs: this._generateLightningBranchPoints(stormX, stormY)
+                });
+            }
+        }
+
+        _generateLightningBranchPoints(targetX, targetY) {
+            const points = [];
+            let currentX = targetX + (Math.random() - 0.5) * 80;
+            let currentY = targetY - 450;
+            points.push({ x: currentX, y: currentY });
+
+            const segments = 8;
+            const stepY = 450 / segments;
+
+            for (let i = 1; i < segments; i++) {
+                currentY += stepY;
+                currentX += (Math.random() - 0.5) * 60;
+                points.push({ x: currentX, y: currentY });
+            }
+            points.push({ x: targetX, y: targetY });
+            return points;
+        }
+
+        _executeStormStrike(storm, player, enemies) {
+            this.addCameraShake(6.5, 0.35);
+
+            if (player) {
+                const dx = player.x - storm.x;
+                const dy = player.y - storm.y;
+                if (dx * dx + dy * dy <= storm.radius * storm.radius) {
+                    if (typeof player.takeDamage === "function") {
+                        player.takeDamage(storm.damage, "LIGHTNING_STORM");
+                    } else if (!player.isInvulnerable) {
+                        player.hp = Math.max(0, (player.hp || 100) - storm.damage);
                     }
                     if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
-                        window.Game.Combat.spawnFloatingText(e.x, e.y - 25, `💥 BÙNG NỔ -${dmg}!`, '#f43f5e');
+                        window.Game.Combat.spawnFloatingText(player.x, player.y - 30, `-${storm.damage} SẤM SÉT!`, "#ff0055");
                     }
                 }
             }
-            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
-                window.Game.Combat.spawnFloatingText(rift.x, rift.y - 40, '💥 NỔ NĂNG LƯỢNG LƯỢNG TỬ!', '#ff0055');
-            }
-        }
 
-        if (window.Game.Audio && typeof window.Game.Audio.playExplosion === 'function') {
-            window.Game.Audio.playExplosion();
-        }
-
-        return true;
-    },
-
-    // Kiểm tra tương tác với phím E hoặc nút tương tác Clean HUD
-    getNearbyInteractable: function (px, py) {
-        if (!this._initialized) this.init();
-
-        const state = window.Game.state || {
-            timeline: 'PRESENT',
-            hasSeed: false,
-            isTreePlanted: false,
-            chestOiled: false,
-            chestOpened: false,
-            unlockedWaypoints: [true, false, false]
-        };
-        const timeline = state.timeline || 'PRESENT';
-        const interactRange = 85;
-
-        this._checkAutoUnlockWaypoints(px, py);
-
-        // 1. Kiểm tra tương tác Khe nứt / Trụ thời gian sẵn sàng
-        for (let i = 0; i < this.timeRifts.length; i++) {
-            const rift = this.timeRifts[i];
-            const dist = Math.hypot(px - rift.x, py - rift.y);
-            if (dist <= interactRange) {
-                if (rift.currentCooldown <= 0) {
-                    return `TIME_RIFT_${rift.id}`;
+            const r2 = storm.radius * storm.radius;
+            for (let i = 0; i < enemies.length; i++) {
+                const enemy = enemies[i];
+                if (!enemy || enemy.dead || enemy.isDead) continue;
+                const edx = enemy.x - storm.x;
+                const edy = enemy.y - storm.y;
+                if (edx * edx + edy * edy <= r2) {
+                    if (window.Game.Enemies && typeof window.Game.Enemies.damageEnemy === 'function') {
+                        window.Game.Enemies.damageEnemy(enemy, Math.round(storm.damage * 1.5), true, false, true);
+                    } else if (typeof enemy.takeDamage === "function") {
+                        enemy.takeDamage(storm.damage * 1.5, true);
+                    } else {
+                        enemy.hp = Math.max(0, (enemy.hp || 50) - storm.damage * 1.5);
+                    }
                 }
             }
         }
 
-        if (timeline === 'PRESENT' && !state.hasSeed) {
-            const seedX = this.SEED_TILE.x * this.tileSize + this.tileSize / 2;
-            const seedY = this.SEED_TILE.y * this.tileSize + this.tileSize / 2;
-            const distToCenter = Math.hypot(px - seedX, py - seedY);
-            if (distToCenter <= interactRange) {
-                return 'SEED';
-            }
-        }
+        /* ---------------------------------------------------------------------- */
+        /* CẬP NHẬT IV.5: SUỐI NƯỚC SINH MỆNH (HEALING SPRINGS UPDATE)             */
+        /* ---------------------------------------------------------------------- */
+        _updateHealingSprings(dt, player) {
+            if (this.currentEra !== WORLD_CONSTANTS.ERAS.PRESENT) return;
 
-        if (timeline === 'PAST' && !state.isTreePlanted) {
-            const soilX = this.SOIL_TILE.x * this.tileSize + this.tileSize / 2;
-            const soilY = this.SOIL_TILE.y * this.tileSize + this.tileSize / 2;
-            const distToSoil = Math.hypot(px - soilX, py - soilY);
-            if (distToSoil <= interactRange) {
-                return 'SOIL';
-            }
-        }
+            for (let i = 0; i < this.healingSprings.length; i++) {
+                const spring = this.healingSprings[i];
+                spring.ripplePhase = (spring.ripplePhase + dt * 2.2) % (Math.PI * 2);
 
-        const chestX = this.CHEST_TILE.x * this.tileSize + this.tileSize / 2;
-        const chestY = this.CHEST_TILE.y * this.tileSize + this.tileSize / 2;
-        const distToChest = Math.hypot(px - chestX, py - chestY);
-
-        if (distToChest <= interactRange) {
-            if (timeline === 'PAST') return 'CHEST_PAST';
-            if (timeline === 'PRESENT') return 'CHEST_PRESENT';
-            if (timeline === 'FUTURE') return 'CHEST_FUTURE';
-        }
-
-        for (let i = 0; i < this.waypoints.length; i++) {
-            const wp = this.waypoints[i];
-            const distToWp = Math.hypot(px - wp.x, py - wp.y);
-            if (distToWp <= interactRange) {
-                return wp.id;
-            }
-        }
-
-        return null;
-    },
-
-    _isLaserTrapActive: function (trap, nowSec) {
-        const period = trap.cyclePeriod || 2.5;
-        const phase = trap.phaseOffset || 0;
-        const cyclePos = Math.floor((nowSec + phase) / period);
-        return cyclePos % 2 === 0;
-    },
-
-    getTerrainEffectAt: function (px, py, dt) {
-        if (!this._initialized) this.init();
-
-        const effect = {
-            speedMultiplier: 1.0,
-            cdrMultiplier: 1.0,
-            damagePerSec: 0,
-            zoneName: null
-        };
-
-        if (typeof px !== 'number' || typeof py !== 'number') {
-            return effect;
-        }
-
-        this._checkAutoUnlockWaypoints(px, py);
-
-        const timeline = (window.Game.state && window.Game.state.timeline) || 'PRESENT';
-        const nowSec = performance.now() * 0.001;
-        const safeDt = dt || 0.016;
-
-        // Cập nhật Trụ Bẫy Môi Trường & Khe Nứt
-        for (let i = 0; i < this.timeRifts.length; i++) {
-            const rift = this.timeRifts[i];
-            if (rift.currentCooldown > 0) {
-                rift.currentCooldown = Math.max(0, rift.currentCooldown - safeDt);
-            }
-            if (rift.isTriggered) {
-                rift.activeTimer -= safeDt;
-                rift.shockwaveR += safeDt * 180;
-                if (rift.activeTimer <= 0) {
-                    rift.isTriggered = false;
-                    rift.shockwaveR = 0;
-                }
-            }
-
-            const dist = Math.hypot(px - rift.x, py - rift.y);
-            if (dist <= 65) {
-                if (rift.currentCooldown <= 0) {
-                    effect.zoneName = `[E] Kích hoạt ${rift.name}`;
-                } else {
-                    effect.zoneName = `${rift.name} (Hồi: ${Math.ceil(rift.currentCooldown)}s)`;
-                }
-            }
-        }
-
-        // Cập nhật Đài Tế Shrines
-        for (let s = 0; s < this.shrines.length; s++) {
-            const sh = this.shrines[s];
-            if (sh.currentCooldown > 0) {
-                sh.currentCooldown = Math.max(0, sh.currentCooldown - safeDt);
-            }
-
-            const dist = Math.hypot(px - sh.x, py - sh.y);
-            if (dist <= sh.radius) {
-                if (sh.currentCooldown <= 0) {
-                    sh.stayTimer = (sh.stayTimer || 0) + safeDt;
-                    effect.zoneName = `${sh.name} (Kích hoạt: ${Math.round((sh.stayTimer / sh.requiredTime) * 100)}%)`;
-
-                    if (sh.stayTimer >= sh.requiredTime) {
-                        sh.stayTimer = 0;
-                        sh.currentCooldown = sh.cooldown;
-
-                        if (sh.type === 'WAR') {
-                            if (window.Game.player) {
-                                window.Game.player.shield = window.Game.player.maxShield || 60;
-                            }
-                            if (window.Game.Combat) {
-                                window.Game.Combat.warShrineTimer = 20.0;
-                                window.Game.Combat.meleeDmgBuff = 1.25;
-                            }
-                            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
-                                window.Game.Combat.spawnFloatingText(sh.x, sh.y - 45, '⚡ CHIẾN THẦN: +25% CẬN CHIẾN & ĐẦY KHIÊN!', '#fbbf24');
-                            }
-                        } else if (sh.type === 'ASTRAL') {
-                            if (window.Game.Combat) {
-                                window.Game.Combat.astralShrineTimer = 12.0;
-                            }
-                            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
-                                window.Game.Combat.spawnFloatingText(sh.x, sh.y - 45, '⏳ TINH KHÔNG: -30% HỒI CHIÊU (12s)!', '#00f5ff');
-                            }
+                if (player) {
+                    const dx = player.x - spring.x;
+                    const dy = player.y - spring.y;
+                    if (dx * dx + dy * dy <= spring.radius * spring.radius) {
+                        if (player.hp < player.maxHp) {
+                            player.hp = Math.min(player.maxHp, player.hp + spring.healPerSecond * dt);
+                        }
+                        if (player.shield !== undefined && player.maxShield !== undefined && player.shield < player.maxShield) {
+                            player.shield = Math.min(player.maxShield, player.shield + spring.shieldPerSecond * dt);
                         }
 
-                        if (window.Game.Audio && typeof window.Game.Audio.playPowerup === 'function') {
-                            window.Game.Audio.playPowerup();
+                        if (!this._isUltraPerformance() && Math.random() < 0.25) {
+                            spring.bubbleParticles.push({
+                                x: player.x + (Math.random() - 0.5) * 40,
+                                y: player.y + (Math.random() - 0.5) * 40,
+                                vy: -35 - Math.random() * 25,
+                                life: 0.8,
+                                maxLife: 0.8,
+                                size: 2 + Math.random() * 3
+                            });
                         }
                     }
+                }
+
+                for (let b = spring.bubbleParticles.length - 1; b >= 0; b--) {
+                    const p = spring.bubbleParticles[b];
+                    p.life -= dt;
+                    p.y += p.vy * dt;
+                    if (p.life <= 0) {
+                        spring.bubbleParticles.splice(b, 1);
+                    }
+                }
+            }
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* CẬP NHẬT IV.6: TRỤ PHÁO LASER TỰ ĐỘNG (AUTO-TURRETS UPDATE)             */
+        /* ---------------------------------------------------------------------- */
+        _updateAutoTurrets(dt, enemies, projectiles) {
+            if (this.currentEra !== WORLD_CONSTANTS.ERAS.FUTURE) return;
+
+            for (let i = 0; i < this.autoTurrets.length; i++) {
+                const turret = this.autoTurrets[i];
+                if (!turret.isRepaired) continue;
+
+                if (turret.laserBeamVisual) {
+                    turret.laserBeamVisual.timer -= dt;
+                    if (turret.laserBeamVisual.timer <= 0) {
+                        turret.laserBeamVisual = null;
+                    }
+                }
+
+                turret.fireTimer += dt;
+
+                let target = null;
+                let minDistSq = turret.attackRange * turret.attackRange;
+
+                for (let e = 0; e < enemies.length; e++) {
+                    const enemy = enemies[e];
+                    if (!enemy || enemy.dead || enemy.isDead) continue;
+                    const dx = enemy.x - turret.x;
+                    const dy = enemy.y - turret.y;
+                    const dSq = dx * dx + dy * dy;
+                    if (dSq <= minDistSq) {
+                        minDistSq = dSq;
+                        target = enemy;
+                    }
+                }
+
+                turret.target = target;
+
+                if (target) {
+                    const targetAngle = Math.atan2(target.y - turret.y, target.x - turret.x);
+                    let diff = targetAngle - turret.barrelAngle;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+                    turret.barrelAngle += diff * Math.min(1.0, dt * 8.0);
+
+                    if (turret.fireTimer >= turret.fireRate) {
+                        turret.fireTimer = 0;
+                        turret.laserBeamVisual = {
+                            startX: turret.x + Math.cos(turret.barrelAngle) * 24,
+                            startY: turret.y + Math.sin(turret.barrelAngle) * 24,
+                            targetX: target.x,
+                            targetY: target.y,
+                            timer: 0.16
+                        };
+
+                        if (window.Game.Enemies && typeof window.Game.Enemies.damageEnemy === 'function') {
+                            window.Game.Enemies.damageEnemy(target, turret.damage, false);
+                        } else if (typeof target.takeDamage === "function") {
+                            target.takeDamage(turret.damage, false);
+                        } else {
+                            target.hp = Math.max(0, (target.hp || 30) - turret.damage);
+                        }
+
+                        if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                            window.Game.Combat.spawnFloatingText(target.x, target.y - 30, `-${turret.damage}`, "#00f0ff");
+                        }
+                    }
+                }
+            }
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* CẬP NHẬT IV.7: BẪY ĐINH PHẢN NGHỊCH (SPIKE TRAPS UPDATE)               */
+        /* ---------------------------------------------------------------------- */
+        _updateSpikeTraps(dt, player, enemies) {
+            for (let i = 0; i < this.spikeTraps.length; i++) {
+                const trap = this.spikeTraps[i];
+                trap.cycleTimer += dt;
+
+                const modTime = trap.cycleTimer % trap.cycleInterval;
+                if (modTime < 2.0) {
+                    trap.spikeState = "UP";
+                } else if (modTime < 2.4) {
+                    trap.spikeState = "RETRACTING";
                 } else {
-                    sh.stayTimer = 0;
-                    effect.zoneName = `${sh.name} (Hồi: ${Math.ceil(sh.currentCooldown)}s)`;
+                    trap.spikeState = "DOWN";
                 }
-            } else {
-                sh.stayTimer = 0;
-            }
-        }
 
-        if (window.Game.Combat && window.Game.Combat.astralShrineTimer > 0) {
-            window.Game.Combat.astralShrineTimer = Math.max(0, window.Game.Combat.astralShrineTimer - safeDt);
-            effect.cdrMultiplier = Math.max(effect.cdrMultiplier, 1.43);
-        }
+                if (trap.spikeState !== "UP") continue;
 
-        // Dị Điểm Không-Thời Gian
-        for (let i = 0; i < this.anomalies.length; i++) {
-            const anom = this.anomalies[i];
-            const dist = Math.hypot(px - anom.x, py - anom.y);
-            if (dist <= anom.radius) {
-                if (anom.speedMultiplier > effect.speedMultiplier) {
-                    effect.speedMultiplier = anom.speedMultiplier;
-                }
-                if (anom.cdrMultiplier > effect.cdrMultiplier) {
-                    effect.cdrMultiplier = anom.cdrMultiplier;
-                }
-                effect.zoneName = anom.name;
-            }
-        }
+                const left = trap.x - trap.width / 2;
+                const right = trap.x + trap.width / 2;
+                const top = trap.y - trap.height / 2;
+                const bottom = trap.y + trap.height / 2;
 
-        // Cạm bẫy địa hình
-        for (let i = 0; i < this.traps.length; i++) {
-            const trap = this.traps[i];
-            if (trap.timeline !== timeline) continue;
-
-            if (trap.type === 'SWAMP') {
-                const dist = Math.hypot(px - trap.x, py - trap.y);
-                if (dist <= trap.radius) {
-                    effect.speedMultiplier *= trap.speedMultiplier;
-                    effect.zoneName = trap.name;
-                }
-            } else if (trap.type === 'THORNS') {
-                const dist = Math.hypot(px - trap.x, py - trap.y);
-                if (dist <= trap.radius) {
-                    effect.speedMultiplier *= trap.speedMultiplier || 0.85;
-                    effect.damagePerSec += trap.damagePerSec;
-                    effect.zoneName = trap.name;
-                }
-            } else if (trap.type === 'LASER') {
-                const halfW = trap.width / 2;
-                const halfH = trap.height / 2;
-                const insideBox =
-                    px >= trap.x - halfW &&
-                    px <= trap.x + halfW &&
-                    py >= trap.y - halfH &&
-                    py <= trap.y + halfH;
-
-                if (insideBox) {
-                    const isActive = this._isLaserTrapActive(trap, nowSec);
-                    if (isActive) {
-                        effect.damagePerSec += trap.damagePerSec;
-                        effect.zoneName = trap.name + ' (ĐANG BẬT)';
-                    } else if (!effect.zoneName) {
-                        effect.zoneName = trap.name + ' (Tạm ngắt)';
+                if (!trap.isReversed && player) {
+                    if (player.x >= left && player.x <= right && player.y >= top && player.y <= bottom) {
+                        if (!player.isInvulnerable) {
+                            const dmg = trap.damage * dt;
+                            if (typeof player.takeDamage === "function") {
+                                player.takeDamage(dmg, "SPIKE_TRAP");
+                            } else {
+                                player.hp = Math.max(0, (player.hp || 100) - dmg);
+                            }
+                        }
+                    }
+                } else if (trap.isReversed) {
+                    for (let e = 0; e < enemies.length; e++) {
+                        const enemy = enemies[e];
+                        if (!enemy || enemy.dead || enemy.isDead) continue;
+                        if (enemy.x >= left && enemy.x <= right && enemy.y >= top && enemy.y <= bottom) {
+                            const totalDamage = (trap.damage * 1.8 + trap.bleedDamage) * dt;
+                            if (window.Game.Enemies && typeof window.Game.Enemies.damageEnemy === 'function') {
+                                window.Game.Enemies.damageEnemy(enemy, totalDamage, false);
+                            } else if (typeof enemy.takeDamage === "function") {
+                                enemy.takeDamage(totalDamage, false);
+                            } else {
+                                enemy.hp = Math.max(0, (enemy.hp || 40) - totalDamage);
+                            }
+                        }
                     }
                 }
             }
         }
 
-        return effect;
-    },
-
-    _getObjectiveTarget: function (player, state) {
-        const ts = this.tileSize;
-        const timeline = (state && state.timeline) || 'PRESENT';
-        const hasSeed = !!(state && state.hasSeed);
-        const isTreePlanted = !!(state && state.isTreePlanted);
-
-        if (!hasSeed && !isTreePlanted) {
-            return {
-                x: this.SEED_TILE.x * ts + ts / 2,
-                y: this.SEED_TILE.y * ts + ts / 2,
-                name: timeline === 'PRESENT' ? 'Hạt Giống Cổ Đại' : 'Hạt Giống (Hiện Tại)',
-                shortName: timeline === 'PRESENT' ? '🌱 Hạt Giống' : '🌱 Về Hiện Tại',
-                color: '#facc15'
-            };
-        }
-
-        if (hasSeed && !isTreePlanted) {
-            return {
-                x: this.SOIL_TILE.x * ts + ts / 2,
-                y: this.SOIL_TILE.y * ts + ts / 2,
-                name: timeline === 'PAST' ? 'Ô Đất Gieo Mầm' : 'Gieo Mầm (Quá Khứ)',
-                shortName: timeline === 'PAST' ? '🌳 Ô Đất Trồng' : '🌳 Về Quá Khứ',
-                color: '#4ade80'
-            };
-        }
-
-        const abyssSouthBoundary = (this.ABYSS_ROW + 0.8) * ts;
-        if (player.y > abyssSouthBoundary) {
-            return {
-                x: this.TREE_BRIDGE_TILE.x * ts + ts / 2,
-                y: this.TREE_BRIDGE_TILE.y * ts + ts / 2,
-                name: 'Cầu Cây Cổ Thụ',
-                shortName: timeline === 'PAST' ? '🌉 Qua Hiện Tại' : '🌉 Cầu Cổ Thụ',
-                color: '#38bdf8'
-            };
-        }
-
-        const enemies = this._getActiveEnemiesList();
-
-        for (let i = 0; i < enemies.length; i++) {
-            const e = enemies[i];
-            if (!e || e.dead || e.isDead || (typeof e.hp === 'number' && e.hp <= 0)) continue;
-            if (e.isMiniBoss && (e.timeline === 'ALL' || e.timeline === timeline)) {
-                return {
-                    x: e.x,
-                    y: e.y,
-                    name: e.name || 'Boss Phụ Kỷ Nguyên',
-                    shortName: '⭐ ' + (e.name ? e.name.slice(0, 12) : 'Boss Phụ'),
-                    color: '#e879f9'
-                };
+        /* ---------------------------------------------------------------------- */
+        /* CẬP NHẬT IV.8: RƯƠNG BÁU NGHỊCH LÝ (PARADOX VAULT UPDATE)               */
+        /* ---------------------------------------------------------------------- */
+        _updateParadoxVault(dt) {
+            if (!this.paradoxVault) return;
+            this.paradoxVault.pulseAngle = (this.paradoxVault.pulseAngle + dt * 2.5) % (Math.PI * 2);
+            if (this.paradoxVault.unlockedAnimationTimer > 0) {
+                this.paradoxVault.unlockedAnimationTimer = Math.max(0, this.paradoxVault.unlockedAnimationTimer - dt);
             }
         }
 
-        for (let i = 0; i < enemies.length; i++) {
-            const e = enemies[i];
-            if (!e || e.dead || e.isDead || (typeof e.hp === 'number' && e.hp <= 0)) continue;
-            if (e.isBoss || e.type === 'boss' || e.rank === 'BOSS' || (e.maxHp && e.maxHp >= 1000)) {
-                return {
-                    x: e.x,
-                    y: e.y,
-                    name: e.name || 'Chúa Tể Thời Không',
-                    shortName: '💀 Chúa Tể',
-                    color: '#f43f5e'
-                };
-            }
-        }
-
-        return {
-            x: 30 * ts,
-            y: 17 * ts,
-            name: 'Đấu Trường Boss',
-            shortName: '⚔️ Đấu Trường Boss',
-            color: '#f43f5e'
-        };
-    },
-
-    _drawObjectiveCompass: function (ctx, player, state, now) {
-        if (!player || typeof player.x !== 'number' || typeof player.y !== 'number') return;
-
-        const target = this._getObjectiveTarget(player, state);
-        if (!target) return;
-
-        const dx = target.x - player.x;
-        const dy = target.y - player.y;
-        const distPx = Math.hypot(dx, dy);
-
-        if (distPx < 65) return;
-
-        const distMeters = Math.max(1, Math.round(distPx / 16));
-        const angle = Math.atan2(dy, dx);
-        const orbitR = 38 + Math.sin(now * 5) * 3;
-
-        const arrowBaseX = player.x + Math.cos(angle) * orbitR;
-        const arrowBaseY = player.y + Math.sin(angle) * orbitR;
-
-        ctx.save();
-
-        ctx.beginPath();
-        ctx.arc(player.x, player.y, orbitR, angle - 0.55, angle + 0.55);
-        ctx.strokeStyle = target.color;
-        ctx.globalAlpha = 0.55;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        ctx.globalAlpha = 1.0;
-
-        ctx.save();
-        ctx.translate(arrowBaseX, arrowBaseY);
-        ctx.rotate(angle);
-
-        ctx.fillStyle = target.color;
-        ctx.shadowColor = target.color;
-        ctx.shadowBlur = 10;
-
-        ctx.beginPath();
-        ctx.moveTo(11, 0);
-        ctx.lineTo(-6, -6.5);
-        ctx.lineTo(-2.5, 0);
-        ctx.lineTo(-6, 6.5);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-        ctx.restore();
-
-        const labelText = `${target.shortName || target.name} • ${distMeters}m`;
-        ctx.font = 'bold 10px sans-serif';
-        const textMetrics = ctx.measureText(labelText);
-        const pillW = Math.ceil(textMetrics.width) + 14;
-        const pillH = 17;
-        const pillX = player.x - pillW / 2;
-        const pillY = player.y + 30;
-
-        ctx.fillStyle = 'rgba(8, 12, 24, 0.82)';
-        ctx.strokeStyle = target.color;
-        ctx.lineWidth = 1.2;
-
-        ctx.beginPath();
-        if (typeof ctx.roundRect === 'function') {
-            ctx.roundRect(pillX, pillY, pillW, pillH, 8);
-        } else {
-            ctx.rect(pillX, pillY, pillW, pillH);
-        }
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = '#ffffff';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(labelText, player.x, pillY + pillH / 2 + 0.5);
-
-        ctx.restore();
-    },
-
-    _drawShrines: function (ctx, camX, camY, camW, camH, now) {
-        for (let i = 0; i < this.shrines.length; i++) {
-            const sh = this.shrines[i];
-            const r = sh.radius;
-
-            if (
-                sh.x + r < camX ||
-                sh.x - r > camX + camW ||
-                sh.y + r < camY ||
-                sh.y - r > camY + camH
-            ) {
-                continue;
-            }
-
-            const isReady = sh.currentCooldown <= 0;
-            const mainColor = isReady ? sh.color : '#64748b';
-
-            ctx.save();
-            ctx.translate(sh.x, sh.y);
-
-            ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-            ctx.strokeStyle = mainColor;
-            ctx.lineWidth = 2.5;
-            ctx.beginPath();
-            ctx.arc(0, 0, 38, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-
-            ctx.save();
-            ctx.rotate(now * 1.8);
-            ctx.strokeStyle = isReady ? sh.runeColor : '#475569';
-            ctx.lineWidth = 1.8;
-            ctx.setLineDash([12, 8]);
-            ctx.beginPath();
-            ctx.arc(0, 0, 48, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.restore();
-
-            if (isReady) {
-                const beamGrad = ctx.createLinearGradient(0, 0, 0, -90);
-                beamGrad.addColorStop(0, mainColor);
-                beamGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-
-                ctx.fillStyle = beamGrad;
-                ctx.globalAlpha = 0.35 + Math.sin(now * 4) * 0.15;
-                ctx.beginPath();
-                ctx.moveTo(-24, 0);
-                ctx.lineTo(24, 0);
-                ctx.lineTo(14, -85);
-                ctx.lineTo(-14, -85);
-                ctx.closePath();
-                ctx.fill();
-                ctx.globalAlpha = 1.0;
-            }
-
-            if (sh.stayTimer > 0) {
-                const pct = sh.stayTimer / sh.requiredTime;
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 4;
-                ctx.beginPath();
-                ctx.arc(0, 0, 52, -Math.PI * 0.5, -Math.PI * 0.5 + Math.PI * 2 * pct);
-                ctx.stroke();
-            }
-
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 11px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(sh.name, 0, 58);
-
-            ctx.restore();
-        }
-    },
-
-    // VẼ KHE NỨT THỜI GIAN & TRỤ NĂNG LƯỢNG MÔI TRƯỜNG
-    _drawTimeRifts: function (ctx, camX, camY, camW, camH, now) {
-        for (let i = 0; i < this.timeRifts.length; i++) {
-            const rift = this.timeRifts[i];
-            const r = rift.radius;
-
-            if (
-                rift.x + r < camX ||
-                rift.x - r > camX + camW ||
-                rift.y + r < camY ||
-                rift.y - r > camY + camH
-            ) {
-                continue;
-            }
-
-            const isSlow = rift.type === 'TIME_SLOW';
-            const themeColor = isSlow ? '#38bdf8' : '#f43f5e';
-            const isReady = rift.currentCooldown <= 0;
-
-            ctx.save();
-            ctx.translate(rift.x, rift.y);
-
-            // Bán kính vùng tác dụng
-            ctx.beginPath();
-            ctx.arc(0, 0, rift.radius, 0, Math.PI * 2);
-            ctx.fillStyle = isSlow ? 'rgba(56, 189, 248, 0.06)' : 'rgba(244, 63, 94, 0.06)';
-            ctx.fill();
-            ctx.strokeStyle = isReady ? themeColor : '#475569';
-            ctx.lineWidth = 1;
-            ctx.setLineDash([6, 6]);
-            ctx.stroke();
-            ctx.setLineDash([]);
-
-            // Sóng kích hoạt (Shockwave) nếu đang nổ/làm chậm
-            if (rift.isTriggered && rift.shockwaveR > 0) {
-                ctx.beginPath();
-                ctx.arc(0, 0, rift.shockwaveR % rift.radius, 0, Math.PI * 2);
-                ctx.strokeStyle = isSlow ? '#00f5ff' : '#ff0055';
-                ctx.lineWidth = 3;
-                ctx.stroke();
-            }
-
-            // Trụ trung tâm
-            ctx.fillStyle = '#0f172a';
-            ctx.strokeStyle = isReady ? themeColor : '#64748b';
-            ctx.lineWidth = 2.5;
-            ctx.beginPath();
-            ctx.arc(0, 0, 22, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-
-            // Lõi xoay năng lượng
-            ctx.save();
-            ctx.rotate(now * (isSlow ? -2.5 : 3.5));
-            ctx.strokeStyle = isReady ? '#ffffff' : '#64748b';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(-10, -10, 20, 20);
-            ctx.restore();
-
-            // Hiển thị tên & nút tương tác
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 10px sans-serif';
-            ctx.textAlign = 'center';
-            const statusText = isReady ? `[E] ${rift.name}` : `Đang nạp (${Math.ceil(rift.currentCooldown)}s)`;
-            ctx.fillText(statusText, 0, 36);
-
-            ctx.restore();
-        }
-    },
-
-    // ========================================================================
-    // MAIN DRAW FUNCTION (ÁP DỤNG OFFSCREEN CANVAS CHỈ 1 LỆNH DRAWIMAGE)
-    // ========================================================================
-    draw: function (ctx, camera) {
-        if (!this._initialized) this.init();
-
-        const state = window.Game.state || {
-            timeline: 'PRESENT',
-            hasSeed: false,
-            isTreePlanted: false,
-            chestOiled: false,
-            chestOpened: false,
-            unlockedWaypoints: [true, false, false]
-        };
-        const timeline = state.timeline || 'PRESENT';
-        const ts = this.tileSize;
-        const now = performance.now() * 0.001;
-
-        // Tự động xây dựng lại cache nếu có sự thay đổi cây cầu nhân quả
-        if (state.isTreePlanted !== this._lastTreePlantedState) {
-            this.rebuildAllBackgroundCaches();
-        }
-
-        if (window.Game.player) {
-            this._checkAutoUnlockWaypoints(window.Game.player.x, window.Game.player.y);
-        }
-
-        const canvasW = (ctx.canvas && ctx.canvas.width) || window.innerWidth || 1280;
-        const canvasH = (ctx.canvas && ctx.canvas.height) || window.innerHeight || 720;
-        const camW = (camera && (camera.width || camera.w)) || canvasW;
-        const camH = (camera && (camera.height || camera.h)) || canvasH;
-
-        let camX = 0;
-        let camY = 0;
-        if (camera && typeof camera.x === 'number' && typeof camera.y === 'number') {
-            camX = camera.x;
-            camY = camera.y;
-        } else if (window.Game.player) {
-            camX = window.Game.player.x - camW / 2;
-            camY = window.Game.player.y - camH / 2;
-        }
-
-        let needInternalTranslate = false;
-        if (typeof ctx.getTransform === 'function') {
-            const m = ctx.getTransform();
-            const isTranslated = Math.abs(m.e) > 0.5 || Math.abs(m.f) > 0.5;
-            if (!isTranslated && (Math.abs(camX) > 0.5 || Math.abs(camY) > 0.5)) {
-                needInternalTranslate = true;
-            }
-        }
-
-        if (needInternalTranslate) {
-            ctx.save();
-            ctx.translate(-camX, -camY);
-        }
-
-        // ====================================================================
-        // 1. TỐI ƯU SIÊU CẤP: DÙNG ĐÚNG 1 LỆNH DRAWIMAGE TỪ OFFSCREEN CANVAS
-        // ====================================================================
-        const cachedBg = this._cachedBackgrounds[timeline];
-        if (cachedBg) {
-            const sx = Math.max(0, Math.min(this.width - camW, camX));
-            const sy = Math.max(0, Math.min(this.height - camH, camY));
-            const sw = Math.min(this.width - sx, camW);
-            const sh = Math.min(this.height - sy, camH);
-
-            ctx.drawImage(
-                cachedBg,
-                sx, sy, sw, sh,
-                sx, sy, sw, sh
-            );
-        }
-
-        const startCol = Math.max(0, Math.floor(camX / ts) - 2);
-        const endCol = Math.min(this.cols - 1, Math.ceil((camX + camW) / ts) + 2);
-        const startRow = Math.max(0, Math.floor(camY / ts) - 2);
-        const endRow = Math.min(this.rows - 1, Math.ceil((camY + camH) / ts) + 2);
-
-        // Vẽ hiệu ứng động của vực thẳm
-        if (this.ABYSS_ROW >= startRow && this.ABYSS_ROW <= endRow) {
-            for (let c = startCol; c <= endCol; c++) {
-                this._drawAbyssDynamicEffect(ctx, c * ts, this.ABYSS_ROW * ts, c, timeline, now);
-            }
-        }
-
-        this._drawTraps(ctx, camX, camY, camW, camH, timeline, now);
-        this._drawAnomalies(ctx, camX, camY, camW, camH, now);
-        this._drawShrines(ctx, camX, camY, camW, camH, now);
-        this._drawTimeRifts(ctx, camX, camY, camW, camH, now);
-
-        if (
-            this.BRIDGE_TILE.x >= startCol &&
-            this.BRIDGE_TILE.x <= endCol &&
-            this.BRIDGE_TILE.y >= startRow &&
-            this.BRIDGE_TILE.y <= endRow
-        ) {
-            this._drawWoodenBridge(ctx, this.BRIDGE_TILE.x * ts, this.BRIDGE_TILE.y * ts, timeline);
-        }
-
-        if (
-            this.SOIL_TILE.x >= startCol - 1 &&
-            this.SOIL_TILE.x <= endCol + 1 &&
-            this.SOIL_TILE.y >= startRow - 2 &&
-            this.SOIL_TILE.y <= endRow + 1
-        ) {
-            this._drawCausalSoilAndTree(
-                ctx,
-                this.SOIL_TILE.x * ts,
-                this.SOIL_TILE.y * ts,
-                timeline,
-                !!state.isTreePlanted,
-                now
-            );
-        }
-
-        if (
-            timeline === 'PRESENT' &&
-            !state.hasSeed &&
-            this.SEED_TILE.x >= startCol &&
-            this.SEED_TILE.x <= endCol &&
-            this.SEED_TILE.y >= startRow &&
-            this.SEED_TILE.y <= endRow
-        ) {
-            this._drawAncientSeed(ctx, this.SEED_TILE.x * ts, this.SEED_TILE.y * ts, now);
-        }
-
-        if (
-            this.CHEST_TILE.x >= startCol - 1 &&
-            this.CHEST_TILE.x <= endCol + 1 &&
-            this.CHEST_TILE.y >= startRow - 1 &&
-            this.CHEST_TILE.y <= endRow + 1
-        ) {
-            this._drawTimeChest(
-                ctx,
-                this.CHEST_TILE.x * ts,
-                this.CHEST_TILE.y * ts,
-                timeline,
-                !!state.chestOiled,
-                !!state.chestOpened,
-                now
-            );
-        }
-
-        this._drawWaypoints(ctx, camX, camY, camW, camH, timeline, state, now);
-
-        for (let r = startRow; r <= endRow; r++) {
-            for (let c = startCol; c <= endCol; c++) {
-                const cell = this.grid[r][c];
-                if (cell === 1 || cell === 2) {
-                    const wx = c * ts;
-                    const wy = r * ts;
-                    this._drawObstacle(ctx, wx, wy, cell, timeline, this.decorGrid[r][c], now);
-                }
-            }
-        }
-
-        if (window.Game.player) {
-            this._drawObjectiveCompass(ctx, window.Game.player, state, now);
-        }
-
-        this._drawWeatherParticles(ctx, camX, camY, camW, camH, timeline, now);
-
-        if (needInternalTranslate) {
-            ctx.restore();
-        }
-    },
-
-    _drawGroundTile: function (ctx, x, y, col, row, decor, timeline, isBossZone) {
-        const ts = this.tileSize;
-        const isRoad = col === 30 && row > 25 && row < 36;
-
-        if (timeline === 'PAST') {
-            if (isBossZone) {
-                ctx.fillStyle = (col + row) % 2 === 0 ? '#5c3c24' : '#52341e';
-            } else if (isRoad) {
-                ctx.fillStyle = '#8b6946';
-            } else {
-                ctx.fillStyle = (col + row) % 2 === 0 ? '#785832' : '#6e4f2c';
-            }
-            ctx.fillRect(x, y, ts, ts);
-
-            if (decor > 0.35 && decor < 0.75) {
-                ctx.fillStyle = '#9c783e';
-                ctx.fillRect(x + 12, y + 18, 6, 3);
-                ctx.fillRect(x + 42, y + 44, 8, 3);
-            }
-        } else if (timeline === 'PRESENT') {
-            if (isBossZone) {
-                ctx.fillStyle = (col + row) % 2 === 0 ? '#2b4c3f' : '#254236';
-            } else if (isRoad) {
-                ctx.fillStyle = '#9e8560';
-            } else {
-                ctx.fillStyle = (col + row) % 2 === 0 ? '#3f8f4e' : '#388246';
-            }
-            ctx.fillRect(x, y, ts, ts);
-
-            if (decor > 0.3 && decor < 0.7 && !isRoad) {
-                ctx.fillStyle = '#52ad62';
-                ctx.fillRect(x + 16, y + 20, 4, 8);
-                ctx.fillRect(x + 20, y + 23, 3, 5);
-                if (decor > 0.6) {
-                    ctx.fillStyle = '#fff380';
-                    ctx.fillRect(x + 44, y + 36, 4, 4);
-                }
-            }
-        } else {
-            ctx.fillStyle = isBossZone ? '#12091c' : '#090d18';
-            ctx.fillRect(x, y, ts, ts);
-
-            ctx.strokeStyle = isBossZone ? 'rgba(255, 0, 128, 0.28)' : 'rgba(0, 240, 255, 0.22)';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(x + 0.5, y + 0.5, ts - 1, ts - 1);
-
-            if (decor > 0.5 && decor < 0.65) {
-                ctx.fillStyle = isBossZone ? 'rgba(255, 0, 128, 0.35)' : 'rgba(0, 240, 255, 0.3)';
-                ctx.fillRect(x + 14, y + 14, 10, 3);
-                ctx.fillRect(x + 24, y + 14, 3, 14);
-            }
-        }
-    },
-
-    _drawAbyssDynamicEffect: function (ctx, x, y, col, timeline, now) {
-        const ts = this.tileSize;
-        if (timeline === 'FUTURE') {
-            const pulse = 0.4 + 0.3 * Math.sin(now * 3 + col * 0.7);
-            ctx.fillStyle = `rgba(0, 229, 255, ${pulse})`;
-            ctx.fillRect(x, y + 28, ts, 8);
-        } else {
-            const mist = 0.12 + 0.08 * Math.sin(now * 2 + col);
-            ctx.fillStyle =
-                timeline === 'PAST'
-                    ? `rgba(210, 140, 70, ${mist})`
-                    : `rgba(110, 180, 220, ${mist})`;
-            ctx.fillRect(x, y + 18, ts, 28);
-        }
-    },
-
-    _drawTraps: function (ctx, camX, camY, camW, camH, timeline, now) {
-        for (let i = 0; i < this.traps.length; i++) {
-            const trap = this.traps[i];
-            if (trap.timeline !== timeline) continue;
-
-            const bound = trap.radius || Math.max(trap.width || 120, trap.height || 120);
-            if (
-                trap.x + bound < camX ||
-                trap.x - bound > camX + camW ||
-                trap.y + bound < camY ||
-                trap.y - bound > camY + camH
-            ) {
-                continue;
-            }
-
-            ctx.save();
-
-            if (trap.type === 'SWAMP') {
-                const r = trap.radius;
-                const grad = ctx.createRadialGradient(trap.x, trap.y, r * 0.15, trap.x, trap.y, r);
-                grad.addColorStop(0, 'rgba(42, 28, 14, 0.92)');
-                grad.addColorStop(0.7, 'rgba(58, 40, 20, 0.82)');
-                grad.addColorStop(1, 'rgba(58, 40, 20, 0)');
-
-                ctx.fillStyle = grad;
-                ctx.beginPath();
-                ctx.arc(trap.x, trap.y, r, 0, Math.PI * 2);
-                ctx.fill();
-
-                ctx.fillStyle = 'rgba(35, 22, 10, 0.65)';
-                ctx.beginPath();
-                ctx.ellipse(trap.x, trap.y, r * 0.72, r * 0.58, 0.2, 0, Math.PI * 2);
-                ctx.fill();
-
-                for (let b = 0; b < 6; b++) {
-                    const bPhase = now * 1.8 + b * 1.1 + i;
-                    const progress = bPhase - Math.floor(bPhase);
-                    const angle = b * 1.05 + i;
-                    const dist = (0.2 + (b % 3) * 0.22) * r;
-                    const bx = trap.x + Math.cos(angle) * dist;
-                    const by = trap.y + Math.sin(angle) * dist * 0.8;
-                    const br = 3 + progress * 7;
-
-                    ctx.fillStyle = `rgba(130, 105, 55, ${1 - progress})`;
-                    ctx.beginPath();
-                    ctx.arc(bx, by, br, 0, Math.PI * 2);
-                    ctx.fill();
-
-                    ctx.strokeStyle = `rgba(190, 160, 95, ${1 - progress})`;
-                    ctx.lineWidth = 1.2;
-                    ctx.stroke();
-                }
-            } else if (trap.type === 'THORNS') {
-                const r = trap.radius;
-                const grad = ctx.createRadialGradient(trap.x, trap.y, r * 0.1, trap.x, trap.y, r);
-                grad.addColorStop(0, 'rgba(75, 25, 95, 0.75)');
-                grad.addColorStop(0.65, 'rgba(35, 85, 45, 0.65)');
-                grad.addColorStop(1, 'rgba(35, 85, 45, 0)');
-
-                ctx.fillStyle = grad;
-                ctx.beginPath();
-                ctx.arc(trap.x, trap.y, r, 0, Math.PI * 2);
-                ctx.fill();
-
-                const spikeCount = 14;
-                for (let s = 0; s < spikeCount; s++) {
-                    const ang = (s / spikeCount) * Math.PI * 2 + Math.sin(now * 1.5 + s) * 0.05;
-                    const innerR = (s % 2 === 0 ? 0.2 : 0.45) * r;
-                    const outerR = (s % 2 === 0 ? 0.88 : 0.72) * r;
-                    const sx = trap.x + Math.cos(ang) * innerR;
-                    const sy = trap.y + Math.sin(ang) * innerR;
-                    const tx = trap.x + Math.cos(ang) * outerR;
-                    const ty = trap.y + Math.sin(ang) * outerR;
-
-                    ctx.fillStyle = s % 2 === 0 ? '#8e2de2' : '#2ecc71';
-                    ctx.beginPath();
-                    ctx.moveTo(sx - Math.sin(ang) * 5, sy + Math.cos(ang) * 5);
-                    ctx.lineTo(tx, ty);
-                    ctx.lineTo(sx + Math.sin(ang) * 5, sy - Math.cos(ang) * 5);
-                    ctx.closePath();
-                    ctx.fill();
-                }
-
-                const pulse = 0.5 + 0.4 * Math.sin(now * 4 + i);
-                ctx.strokeStyle = `rgba(195, 60, 255, ${pulse})`;
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.arc(trap.x, trap.y, r * 0.82, 0, Math.PI * 2);
-                ctx.stroke();
-            } else if (trap.type === 'LASER') {
-                const halfW = trap.width / 2;
-                const halfH = trap.height / 2;
-                const leftX = trap.x - halfW;
-                const rightX = trap.x + halfW;
-                const isActive = this._isLaserTrapActive(trap, now);
-
-                const period = trap.cyclePeriod || 2.5;
-                const elapsedInCycle = (now + (trap.phaseOffset || 0)) % period;
-                const isAboutToSwitch = elapsedInCycle > period - 0.45;
-
-                ctx.fillStyle = isActive ? 'rgba(255, 20, 60, 0.22)' : 'rgba(0, 240, 255, 0.08)';
-                ctx.fillRect(leftX, trap.y - halfH, trap.width, trap.height);
-
-                ctx.fillStyle = '#1b2436';
-                ctx.strokeStyle = isActive ? '#ff1744' : '#00e5ff';
-                ctx.lineWidth = 2;
-                ctx.fillRect(leftX - 8, trap.y - halfH, 16, trap.height);
-                ctx.strokeRect(leftX - 8, trap.y - halfH, 16, trap.height);
-                ctx.fillRect(rightX - 8, trap.y - halfH, 16, trap.height);
-                ctx.strokeRect(rightX - 8, trap.y - halfH, 16, trap.height);
-
-                const lampColor = isActive ? '#ff1744' : isAboutToSwitch ? '#ffea00' : '#00e676';
-                ctx.fillStyle = lampColor;
-                ctx.beginPath();
-                ctx.arc(leftX, trap.y, 5, 0, Math.PI * 2);
-                ctx.arc(rightX, trap.y, 5, 0, Math.PI * 2);
-                ctx.fill();
-
-                if (isActive) {
-                    for (let beam = -1; beam <= 1; beam++) {
-                        const by = trap.y + beam * 14;
-                        const jitter = Math.sin(now * 45 + beam * 2) * 1.5;
-
-                        ctx.strokeStyle = 'rgba(255, 20, 60, 0.65)';
-                        ctx.lineWidth = 6;
-                        ctx.beginPath();
-                        ctx.moveTo(leftX + 6, by);
-                        ctx.lineTo(rightX - 6, by + jitter);
-                        ctx.stroke();
-
-                        ctx.strokeStyle = '#ffffff';
-                        ctx.lineWidth = 2;
-                        ctx.beginPath();
-                        ctx.moveTo(leftX + 6, by);
-                        ctx.lineTo(rightX - 6, by + jitter);
-                        ctx.stroke();
+        /* ---------------------------------------------------------------------- */
+        /* CẬP NHẬT HỆ THỐNG THỜI TIẾT VÀ ĐÁ NỔI KHÔNG TRỌNG LỰC                  */
+        /* ---------------------------------------------------------------------- */
+        _updateWeatherAndFloatingRocks(dt) {
+            if (!this._isUltraPerformance()) {
+                for (let i = 0; i < this.weatherParticles.length; i++) {
+                    const p = this.weatherParticles[i];
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    if (p.y > this.height) {
+                        p.y = 0;
+                        p.x = Math.random() * this.width;
                     }
-                } else if (isAboutToSwitch) {
-                    ctx.strokeStyle = 'rgba(255, 210, 0, 0.55)';
-                    ctx.setLineDash([8, 8]);
-                    ctx.lineWidth = 1.5;
-                    ctx.beginPath();
-                    ctx.moveTo(leftX + 6, trap.y);
-                    ctx.lineTo(rightX - 6, trap.y);
-                    ctx.stroke();
-                    ctx.setLineDash([]);
+                    if (p.x < 0) p.x = this.width;
+                    if (p.x > this.width) p.x = 0;
                 }
             }
 
-            ctx.restore();
+            for (let i = 0; i < this.floatingRocks.length; i++) {
+                const rock = this.floatingRocks[i];
+                rock.phase = (rock.phase + dt * rock.floatSpeed) % (Math.PI * 2);
+                rock.rotation = (rock.rotation + dt * rock.rotSpeed) % (Math.PI * 2);
+                rock.x = rock.baseX + Math.cos(rock.phase) * (rock.amplitude * 0.4);
+                rock.y = rock.baseY + Math.sin(rock.phase) * rock.amplitude;
+            }
         }
-    },
 
-    _drawAnomalies: function (ctx, camX, camY, camW, camH, now) {
-        for (let i = 0; i < this.anomalies.length; i++) {
-            const anom = this.anomalies[i];
-            const r = anom.radius;
+        /* ---------------------------------------------------------------------- */
+        /* V.8: KIỂM TRA CHẾ ĐỘ 120HZ / SIÊU MƯỢT (ULTRA PERFORMANCE TOGGLE)     */
+        /* ---------------------------------------------------------------------- */
+        _isUltraPerformance() {
+            return !!(window.Game.state && (window.Game.state.ultraPerformance || window.Game.state.lowGraphics || window.Game.state.is120HzOptimized));
+        }
 
-            if (
-                anom.x + r < camX ||
-                anom.x - r > camX + camW ||
-                anom.y + r < camY ||
-                anom.y - r > camY + camH
-            ) {
-                continue;
+        /* ---------------------------------------------------------------------- */
+        /* HÀM VẼ TỔNG HỢP: RENDER THẾ GIỚI THEO CAMERA VIEWPORT                   */
+        /* ---------------------------------------------------------------------- */
+        draw(ctx, camera) {
+            if (!ctx || !camera) return;
+
+            if (window.Game.state && window.Game.state.timeline && this.currentEra !== window.Game.state.timeline) {
+                this.setEra(window.Game.state.timeline);
             }
 
-            const isSpeed = anom.type === 'SPEED';
-            const primaryRGB = isSpeed ? '0, 245, 255' : '200, 80, 255';
+            if (!this.terrainChunks || this.terrainChunks.size === 0) {
+                this._prebuildOffscreenTerrainChunks();
+            }
 
             ctx.save();
-            ctx.translate(anom.x, anom.y);
+            ctx.translate(this.cameraShake.x, this.cameraShake.y);
 
-            const grad = ctx.createRadialGradient(0, 0, r * 0.05, 0, 0, r);
-            grad.addColorStop(0, `rgba(${primaryRGB}, 0.45)`);
-            grad.addColorStop(0.6, `rgba(${primaryRGB}, 0.18)`);
-            grad.addColorStop(1, `rgba(${primaryRGB}, 0)`);
-            ctx.fillStyle = grad;
-            ctx.beginPath();
-            ctx.arc(0, 0, r, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.save();
-            ctx.rotate(now * 1.4);
-            ctx.strokeStyle = `rgba(${primaryRGB}, 0.75)`;
-            ctx.lineWidth = 2.5;
-            ctx.setLineDash([18, 12]);
-            ctx.beginPath();
-            ctx.arc(0, 0, r * 0.82, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.restore();
-
-            ctx.save();
-            ctx.rotate(-now * 2.2);
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([10, 16]);
-            ctx.beginPath();
-            ctx.arc(0, 0, r * 0.52, 0, Math.PI * 2);
-            ctx.stroke();
-
-            for (let arm = 0; arm < 4; arm++) {
-                ctx.save();
-                ctx.rotate((arm * Math.PI) / 2);
-                ctx.strokeStyle = `rgba(${primaryRGB}, 0.85)`;
-                ctx.lineWidth = 2;
-                ctx.setLineDash([]);
-                ctx.beginPath();
-                ctx.arc(r * 0.25, 0, r * 0.35, 0, Math.PI * 0.85);
-                ctx.stroke();
-                ctx.restore();
-            }
-            ctx.restore();
-
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 11px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(isSpeed ? '⚡ TỐC ĐỘ x1.75' : '⏳ HỒI CHIÊU x2.0', 0, 4);
+            this._drawCachedTerrainChunks(ctx, camera);
+            this._drawZonalFloors(ctx, camera);
+            this._drawSpikeTraps(ctx, camera);
+            this._drawRiftPortals(ctx, camera);
+            this._drawEternityTree(ctx, camera);
+            this._drawTemporalShrines(ctx, camera);
+            this._drawParadoxVaultAndSeals(ctx, camera);
+            this._drawAutoTurrets(ctx, camera);
+            this._drawTemporalStorms(ctx, camera);
+            this._drawFloatingRocks(ctx, camera);
+            this._drawWeatherParticles(ctx, camera);
 
             ctx.restore();
         }
-    },
 
-    _drawWoodenBridge: function (ctx, x, y, timeline) {
-        const ts = this.tileSize;
+        /* ---------------------------------------------------------------------- */
+        /* VẼ ĐỊA HÌNH CACHED QUA OFFSCREEN CHUNKS GẦN NHẤT                       */
+        /* ---------------------------------------------------------------------- */
+        _drawCachedTerrainChunks(ctx, camera) {
+            const startCx = Math.max(0, Math.floor(camera.x / this.chunkSize));
+            const endCx = Math.min(this.chunksCols - 1, Math.floor((camera.x + camera.width) / this.chunkSize));
+            const startCy = Math.max(0, Math.floor(camera.y / this.chunkSize));
+            const endCy = Math.min(this.chunksRows - 1, Math.floor((camera.y + camera.height) / this.chunkSize));
 
-        if (timeline === 'PAST') {
-            ctx.fillStyle = '#593718';
-            ctx.fillRect(x + 6, y, 8, ts);
-            ctx.fillRect(x + ts - 14, y, 8, ts);
-
-            for (let i = 2; i < ts; i += 10) {
-                ctx.fillStyle = i % 20 === 2 ? '#8f5d2e' : '#7a4d24';
-                ctx.fillRect(x + 4, y + i, ts - 8, 7);
-            }
-
-            ctx.fillStyle = '#c49a5c';
-            ctx.fillRect(x + 3, y, 3, ts);
-            ctx.fillRect(x + ts - 6, y, 3, ts);
-        } else {
-            const plankColor = timeline === 'PRESENT' ? '#634326' : '#2c3545';
-            ctx.fillStyle = plankColor;
-
-            ctx.fillRect(x + 6, y, ts - 12, 12);
-            ctx.fillRect(x + 10, y + 12, 12, 6);
-            ctx.fillRect(x + ts - 22, y + 12, 10, 5);
-
-            ctx.fillRect(x + 6, y + ts - 12, ts - 12, 12);
-            ctx.fillRect(x + 8, y + ts - 18, 14, 6);
-            ctx.fillRect(x + ts - 24, y + ts - 17, 12, 5);
-
-            if (timeline === 'FUTURE') {
-                ctx.strokeStyle = 'rgba(255, 50, 80, 0.75)';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(x + 20, y + 20);
-                ctx.lineTo(x + ts - 20, y + ts - 20);
-                ctx.moveTo(x + ts - 20, y + 20);
-                ctx.lineTo(x + 20, y + ts - 20);
-                ctx.stroke();
-            }
-        }
-    },
-
-    _drawCausalSoilAndTree: function (ctx, soilX, soilY, timeline, isTreePlanted, now) {
-        const ts = this.tileSize;
-        const centerX = soilX + ts / 2;
-        const centerY = soilY + ts / 2;
-
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, 22, 0, Math.PI * 2);
-        ctx.fillStyle = timeline === 'FUTURE' ? '#1c2b38' : '#4a2f18';
-        ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle =
-            timeline === 'PAST'
-                ? '#ffcf5c'
-                : timeline === 'PRESENT'
-                ? '#76d96a'
-                : '#00f2ff';
-        ctx.stroke();
-
-        if (timeline === 'PAST' && !isTreePlanted) {
-            const pulse = 18 + Math.sin(now * 4) * 4;
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, pulse, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(255, 220, 100, 0.85)';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-        }
-
-        if (isTreePlanted) {
-            if (timeline === 'PAST') {
-                ctx.fillStyle = '#47d147';
-                ctx.fillRect(centerX - 3, centerY - 16, 6, 16);
-                ctx.beginPath();
-                ctx.ellipse(centerX - 7, centerY - 14, 7, 4, -0.4, 0, Math.PI * 2);
-                ctx.ellipse(centerX + 7, centerY - 16, 7, 4, 0.4, 0, Math.PI * 2);
-                ctx.fill();
-            } else {
-                const bridgeY = this.TREE_BRIDGE_TILE.y * ts;
-
-                ctx.fillStyle = timeline === 'PRESENT' ? '#5e3a1a' : '#2a1f4a';
-                ctx.beginPath();
-                ctx.arc(centerX, centerY, 20, 0, Math.PI * 2);
-                ctx.fill();
-
-                ctx.fillStyle = timeline === 'PRESENT' ? '#6e4520' : '#35275c';
-                ctx.fillRect(soilX + 12, bridgeY - 12, ts - 24, ts + 42);
-
-                ctx.strokeStyle = timeline === 'PRESENT' ? '#8c5a2b' : '#00f7ff';
-                ctx.lineWidth = 2;
-                ctx.strokeRect(soilX + 14, bridgeY - 10, ts - 28, ts + 38);
-
-                ctx.fillStyle = timeline === 'PRESENT' ? '#2e8b46' : '#00e5ff';
-                ctx.beginPath();
-                ctx.arc(soilX + 12, bridgeY + 16, 10, 0, Math.PI * 2);
-                ctx.arc(soilX + ts - 12, bridgeY + 42, 11, 0, Math.PI * 2);
-                ctx.arc(centerX, bridgeY - 10, 18, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-
-        ctx.restore();
-    },
-
-    _drawAncientSeed: function (ctx, x, y, now) {
-        const ts = this.tileSize;
-        const cx = x + ts / 2;
-        const cy = y + ts / 2;
-        const floatOffset = Math.sin(now * 3.5) * 4;
-
-        ctx.save();
-
-        const glowRadius = 22 + Math.sin(now * 5) * 5;
-        const grad = ctx.createRadialGradient(
-            cx,
-            cy + floatOffset,
-            2,
-            cx,
-            cy + floatOffset,
-            glowRadius
-        );
-        grad.addColorStop(0, 'rgba(255, 250, 160, 0.95)');
-        grad.addColorStop(0.5, 'rgba(80, 255, 120, 0.55)');
-        grad.addColorStop(1, 'rgba(80, 255, 120, 0)');
-
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(cx, cy + floatOffset, glowRadius, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = '#ffe966';
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.ellipse(cx, cy + floatOffset, 9, 13, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.restore();
-    },
-
-    _drawTimeChest: function (ctx, x, y, timeline, chestOiled, chestOpened, now) {
-        const ts = this.tileSize;
-        const cx = x + ts / 2;
-        const cy = y + ts / 2;
-
-        ctx.save();
-
-        ctx.fillStyle = timeline === 'FUTURE' ? '#162030' : '#4a4642';
-        ctx.fillRect(x + 8, y + 14, ts - 16, ts - 20);
-        ctx.strokeStyle = timeline === 'FUTURE' ? '#00e5ff' : '#2b2825';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(x + 8, y + 14, ts - 16, ts - 20);
-
-        if (timeline === 'PAST') {
-            ctx.fillStyle = '#8c5223';
-            ctx.fillRect(x + 14, y + 20, ts - 28, 28);
-
-            ctx.fillStyle = '#a8642c';
-            ctx.fillRect(x + 14, y + 16, ts - 28, 10);
-            ctx.strokeStyle = chestOiled ? '#ffd700' : '#d4af37';
-            ctx.lineWidth = 2.5;
-            ctx.strokeRect(x + 14, y + 16, ts - 28, 32);
-
-            ctx.fillStyle = '#ffd700';
-            ctx.fillRect(cx - 4, cy - 2, 8, 10);
-
-            if (chestOiled) {
-                const glowR = 28 + Math.sin(now * 5) * 4;
-                const grad = ctx.createRadialGradient(cx, cy, 4, cx, cy, glowR);
-                grad.addColorStop(0, 'rgba(255, 235, 120, 0.65)');
-                grad.addColorStop(1, 'rgba(255, 215, 0, 0)');
-                ctx.fillStyle = grad;
-                ctx.beginPath();
-                ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
-                ctx.fill();
-
-                for (let s = 0; s < 4; s++) {
-                    const ang = now * 2.5 + (s * Math.PI) / 2;
-                    const sx = cx + Math.cos(ang) * 20;
-                    const sy = cy + Math.sin(ang) * 14;
-                    ctx.fillStyle = '#fff9c4';
-                    ctx.fillRect(sx - 2, sy - 2, 4, 4);
+            for (let cy = startCy; cy <= endCy; cy++) {
+                for (let cx = startCx; cx <= endCx; cx++) {
+                    const key = `${this.currentEra}_${cx}_${cy}`;
+                    const chunkCanvas = this.terrainChunks.get(key);
+                    if (chunkCanvas) {
+                        const drawX = cx * this.chunkSize - camera.x;
+                        const drawY = cy * this.chunkSize - camera.y;
+                        ctx.drawImage(chunkCanvas, drawX, drawY);
+                    }
                 }
             }
-        } else if (timeline === 'PRESENT') {
-            ctx.fillStyle = chestOiled ? '#5c4938' : '#4a3528';
-            ctx.fillRect(x + 14, y + 18, ts - 28, 30);
+        }
 
-            ctx.strokeStyle = chestOiled ? '#b89758' : '#6e3b1e';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(x + 14, y + 18, ts - 28, 30);
+        /* ---------------------------------------------------------------------- */
+        /* VẼ KHU VỰC ĐẶC BIỆT                                                    */
+        /* ---------------------------------------------------------------------- */
+        _drawZonalFloors(ctx, camera) {
+            const isLow = this._isUltraPerformance();
 
-            ctx.fillStyle = '#38753b';
-            ctx.beginPath();
-            ctx.arc(x + 18, y + 24, 6, 0, Math.PI * 2);
-            ctx.arc(x + ts - 20, y + 42, 7, 0, Math.PI * 2);
-            ctx.fill();
+            if (this.currentEra === WORLD_CONSTANTS.ERAS.PRESENT) {
+                for (let i = 0; i < this.healingSprings.length; i++) {
+                    const s = this.healingSprings[i];
+                    const sx = s.x - camera.x;
+                    const sy = s.y - camera.y;
+                    if (sx + s.radius < 0 || sx - s.radius > camera.width ||
+                        sy + s.radius < 0 || sy - s.radius > camera.height) continue;
 
-            ctx.strokeStyle = '#8a7f78';
-            ctx.lineWidth = 2.5;
-            ctx.beginPath();
-            ctx.moveTo(x + 14, y + 22);
-            ctx.lineTo(x + ts - 14, y + 44);
-            ctx.moveTo(x + ts - 14, y + 22);
-            ctx.lineTo(x + 14, y + 44);
-            ctx.stroke();
-        } else {
-            if (chestOiled) {
-                if (!chestOpened) {
-                    const pulseR = 34 + Math.sin(now * 6) * 6;
-                    const grad = ctx.createRadialGradient(cx, cy, 4, cx, cy, pulseR);
-                    grad.addColorStop(0, 'rgba(255, 240, 120, 0.95)');
-                    grad.addColorStop(0.55, 'rgba(255, 190, 0, 0.45)');
-                    grad.addColorStop(1, 'rgba(255, 190, 0, 0)');
+                    ctx.save();
+                    const grad = ctx.createRadialGradient(sx, sy, s.radius * 0.2, sx, sy, s.radius);
+                    grad.addColorStop(0, "rgba(72, 202, 228, 0.45)");
+                    grad.addColorStop(0.7, "rgba(0, 119, 182, 0.35)");
+                    grad.addColorStop(1, "rgba(3, 4, 94, 0.1)");
                     ctx.fillStyle = grad;
                     ctx.beginPath();
-                    ctx.arc(cx, cy, pulseR, 0, Math.PI * 2);
+                    ctx.arc(sx, sy, s.radius, 0, Math.PI * 2);
                     ctx.fill();
+
+                    if (!isLow) {
+                        ctx.strokeStyle = "rgba(144, 224, 239, 0.6)";
+                        ctx.lineWidth = 2.5;
+                        ctx.beginPath();
+                        const rWave = (s.radius * 0.3) + Math.sin(s.ripplePhase) * (s.radius * 0.5);
+                        ctx.arc(sx, sy, Math.max(10, rWave), 0, Math.PI * 2);
+                        ctx.stroke();
+
+                        ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
+                        for (let b = 0; b < s.bubbleParticles.length; b++) {
+                            const bp = s.bubbleParticles[b];
+                            ctx.beginPath();
+                            ctx.arc(bp.x - camera.x, bp.y - camera.y, bp.size, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+                    ctx.restore();
                 }
+            }
 
-                ctx.fillStyle = chestOpened ? '#332b1a' : '#d49b16';
-                ctx.fillRect(x + 14, y + 18, ts - 28, 30);
+            for (let i = 0; i < this.cursedGrounds.length; i++) {
+                const cg = this.cursedGrounds[i];
+                const cx = cg.x - camera.x;
+                const cy = cg.y - camera.y;
+                if (cx + cg.radius < 0 || cx - cg.radius > camera.width ||
+                    cy + cg.radius < 0 || cy - cg.radius > camera.height) continue;
 
-                ctx.strokeStyle = '#ffea00';
-                ctx.lineWidth = 2.5;
-                ctx.strokeRect(x + 14, y + 18, ts - 28, 30);
-
-                if (chestOpened) {
-                    ctx.fillStyle = '#120e07';
-                    ctx.fillRect(x + 16, y + 20, ts - 32, 10);
-                } else {
-                    ctx.fillStyle = '#ffffff';
-                    ctx.beginPath();
-                    ctx.arc(cx, cy + 2, 5, 0, Math.PI * 2);
-                    ctx.fill();
-                }
-            } else {
-                ctx.fillStyle = '#3b2820';
+                ctx.save();
+                const cGrad = ctx.createRadialGradient(cx, cy, cg.radius * 0.15, cx, cy, cg.radius);
+                cGrad.addColorStop(0, "rgba(114, 9, 183, 0.4)");
+                cGrad.addColorStop(0.8, "rgba(58, 12, 163, 0.25)");
+                cGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
+                ctx.fillStyle = cGrad;
                 ctx.beginPath();
-                ctx.moveTo(x + 12, y + 46);
-                ctx.lineTo(x + 22, y + 32);
-                ctx.lineTo(x + 36, y + 38);
-                ctx.lineTo(x + 48, y + 30);
-                ctx.lineTo(x + 52, y + 48);
-                ctx.closePath();
+                ctx.arc(cx, cy, cg.radius, 0, Math.PI * 2);
                 ctx.fill();
 
-                ctx.strokeStyle = '#6e4230';
+                ctx.strokeStyle = "rgba(247, 37, 133, 0.4)";
+                ctx.setLineDash([8, 8]);
                 ctx.lineWidth = 2;
                 ctx.beginPath();
-                ctx.moveTo(x + 16, y + 44);
-                ctx.lineTo(x + 30, y + 34);
-                ctx.moveTo(x + 34, y + 45);
-                ctx.lineTo(x + 46, y + 36);
+                ctx.arc(cx, cy, cg.radius, 0, Math.PI * 2);
                 ctx.stroke();
+                ctx.restore();
+            }
+
+            for (let i = 0; i < this.zeroGravityZones.length; i++) {
+                const zg = this.zeroGravityZones[i];
+                const zx = zg.x - camera.x;
+                const zy = zg.y - camera.y;
+                if (zx + zg.radius < 0 || zx - zg.radius > camera.width ||
+                    zy + zg.radius < 0 || zy - zg.radius > camera.height) continue;
+
+                ctx.save();
+                const zGrad = ctx.createRadialGradient(zx, zy, zg.radius * 0.2, zx, zy, zg.radius);
+                zGrad.addColorStop(0, "rgba(76, 201, 240, 0.25)");
+                zGrad.addColorStop(0.8, "rgba(67, 97, 238, 0.15)");
+                zGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
+                ctx.fillStyle = zGrad;
+                ctx.beginPath();
+                ctx.arc(zx, zy, zg.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = "rgba(76, 201, 240, 0.5)";
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([4, 6]);
+                ctx.beginPath();
+                ctx.arc(zx, zy, zg.radius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
             }
         }
 
-        ctx.restore();
-    },
+        /* ---------------------------------------------------------------------- */
+        /* VẼ IV.7: BẪY ĐINH & CẦN GẠT ĐIỀU KHIỂN                                 */
+        /* ---------------------------------------------------------------------- */
+        _drawSpikeTraps(ctx, camera) {
+            for (let i = 0; i < this.spikeTraps.length; i++) {
+                const t = this.spikeTraps[i];
+                const tx = t.x - camera.x;
+                const ty = t.y - camera.y;
 
-    _drawWaypoints: function (ctx, camX, camY, camW, camH, timeline, state, now) {
-        const unlockedList = (state && state.unlockedWaypoints) || [true, false, false];
+                if (tx + t.width / 2 < 0 || tx - t.width / 2 > camera.width ||
+                    ty + t.height / 2 < 0 || ty - t.height / 2 > camera.height) continue;
 
-        for (let i = 0; i < this.waypoints.length; i++) {
-            const wp = this.waypoints[i];
-            if (
-                wp.x + 80 < camX ||
-                wp.x - 80 > camX + camW ||
-                wp.y + 80 < camY ||
-                wp.y - 80 > camY + camH
-            ) {
-                continue;
+                ctx.save();
+                ctx.fillStyle = "#1e1e24";
+                ctx.fillRect(tx - t.width / 2, ty - t.height / 2, t.width, t.height);
+                ctx.strokeStyle = t.isReversed ? "#00ff88" : "#8d99ae";
+                ctx.lineWidth = 2.5;
+                ctx.strokeRect(tx - t.width / 2, ty - t.height / 2, t.width, t.height);
+
+                const cols = 4;
+                const rows = 4;
+                const cellW = t.width / cols;
+                const cellH = t.height / rows;
+
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const px = tx - t.width / 2 + c * cellW + cellW / 2;
+                        const py = ty - t.height / 2 + r * cellH + cellH / 2;
+
+                        if (t.spikeState === "UP") {
+                            ctx.fillStyle = t.isReversed ? "#00ff88" : "#ef233c";
+                            ctx.beginPath();
+                            ctx.arc(px, py, 6, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.strokeStyle = "#ffffff";
+                            ctx.lineWidth = 1;
+                            ctx.stroke();
+                        } else if (t.spikeState === "RETRACTING") {
+                            ctx.fillStyle = "#4a4e69";
+                            ctx.beginPath();
+                            ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+                            ctx.fill();
+                        } else {
+                            ctx.fillStyle = "#111116";
+                            ctx.beginPath();
+                            ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+                }
+
+                const lx = t.lever.x - camera.x;
+                const ly = t.lever.y - camera.y;
+                ctx.fillStyle = "#333333";
+                ctx.beginPath();
+                ctx.arc(lx, ly, 16, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = t.lever.isActivated ? "#00ff88" : "#ffaa00";
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                ctx.strokeStyle = "#ffffff";
+                ctx.lineWidth = 4;ctx.beginPath();
+                ctx.moveTo(lx, ly);
+                const leverAngle = t.lever.isActivated ? Math.PI * 0.25 : -Math.PI * 0.25;
+                ctx.lineTo(lx + Math.cos(leverAngle) * 18, ly + Math.sin(leverAngle) * 18);
+                ctx.stroke();
+                ctx.restore();
             }
+        }
 
-            const isUnlocked = !!unlockedList[wp.index];
-            const mainColor = isUnlocked ? '#00ffcc' : '#7f8c8d';
+        /* ---------------------------------------------------------------------- */
+        /* VẼ IV.2: CỔNG DỊCH CHUYỂN TỨC THỜI (RIFT PORTALS)                     */
+        /* ---------------------------------------------------------------------- */
+        _drawRiftPortals(ctx, camera) {
+            for (let i = 0; i < this.riftPortals.length; i++) {
+                const p = this.riftPortals[i];
+                const px = p.x - camera.x;
+                const py = p.y - camera.y;
 
-            ctx.save();
-            ctx.translate(wp.x, wp.y);
+                if (px + p.radius < 0 || px - p.radius > camera.width ||
+                    py + p.radius < 0 || py - p.radius > camera.height) continue;
 
-            if (isUnlocked) {
-                const glowR = 44 + Math.sin(now * 4 + i) * 5;
-                const grad = ctx.createRadialGradient(0, 0, 6, 0, 0, glowR);
-                grad.addColorStop(0, 'rgba(0, 255, 204, 0.55)');
-                grad.addColorStop(0.6, 'rgba(0, 200, 255, 0.22)');
-                grad.addColorStop(1, 'rgba(0, 200, 255, 0)');
+                ctx.save();
+                const ready = p.cooldown <= 0;
+                const pulseR = p.radius + Math.sin(p.pulsePhase) * 6;
+
+                const grad = ctx.createRadialGradient(px, py, 6, px, py, pulseR);
+                grad.addColorStop(0, "#ffffff");
+                grad.addColorStop(0.35, p.color);
+                grad.addColorStop(0.85, "rgba(20, 10, 40, 0.7)");
+                grad.addColorStop(1, "rgba(0, 0, 0, 0)");
+
                 ctx.fillStyle = grad;
                 ctx.beginPath();
-                ctx.arc(0, 0, glowR, 0, Math.PI * 2);
-                ctx.fill();
-            }
-
-            ctx.save();
-            ctx.rotate(isUnlocked ? now * 1.2 : 0);
-            ctx.strokeStyle = mainColor;
-            ctx.lineWidth = 2;
-            ctx.setLineDash([8, 6]);
-            ctx.beginPath();
-            ctx.arc(0, 0, 30, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.restore();
-
-            ctx.fillStyle = timeline === 'FUTURE' ? '#152238' : '#3d4849';
-            ctx.strokeStyle = mainColor;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(0, 0, 20, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-
-            const floatY = isUnlocked ? Math.sin(now * 3.5 + i) * 4 : 0;
-            ctx.fillStyle = isUnlocked ? '#00f5ff' : '#556066';
-            ctx.beginPath();
-            ctx.moveTo(0, -24 + floatY);
-            ctx.lineTo(11, -6 + floatY);
-            ctx.lineTo(0, 8 + floatY);
-            ctx.lineTo(-11, -6 + floatY);
-            ctx.closePath();
-            ctx.fill();
-
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 1.2;
-            ctx.stroke();
-
-            ctx.fillStyle = isUnlocked ? '#b8fff2' : '#95a5a6';
-            ctx.font = 'bold 11px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(wp.name, 0, -32);
-
-            ctx.restore();
-        }
-    },
-
-    _drawObstacle: function (ctx, x, y, type, timeline, decor, now) {
-        const ts = this.tileSize;
-        const cx = x + ts / 2;
-        const cy = y + ts / 2;
-
-        if (type === 1) {
-            if (timeline === 'FUTURE') {
-                ctx.fillStyle = '#1b263b';
-                ctx.fillRect(x + 6, y + 6, ts - 12, ts - 12);
-                ctx.strokeStyle = '#00f0ff';
-                ctx.lineWidth = 2;
-                ctx.strokeRect(x + 8, y + 8, ts - 16, ts - 16);
-            } else {
-                ctx.fillStyle = timeline === 'PAST' ? '#5e4b3c' : '#64706c';
-                ctx.beginPath();
-                ctx.arc(cx, cy, 24, 0, Math.PI * 2);
+                ctx.arc(px, py, pulseR, 0, Math.PI * 2);
                 ctx.fill();
 
-                ctx.fillStyle = timeline === 'PAST' ? '#786250' : '#808f8a';
-                ctx.beginPath();
-                ctx.arc(cx - 5, cy - 6, 15, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        } else if (type === 2) {
-            if (timeline === 'FUTURE') {
-                ctx.fillStyle = '#12192b';
-                ctx.beginPath();
-                ctx.arc(cx, cy, 22, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.save();
+                ctx.translate(px, py);
+                ctx.rotate(p.vortexRotation);
+                ctx.strokeStyle = ready ? "#ffffff" : "#666666";
+                ctx.lineWidth = 2.5;
 
-                const pulse = 0.6 + 0.4 * Math.sin(now * 4 + decor * 10);
-                ctx.strokeStyle = `rgba(255, 0, 170, ${pulse})`;
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.arc(cx, cy, 16, 0, Math.PI * 2);
-                ctx.stroke();
-
-                ctx.fillStyle = '#00f7ff';
-                ctx.beginPath();
-                ctx.arc(cx, cy, 7, 0, Math.PI * 2);
-                ctx.fill();
-            } else {
-                ctx.fillStyle = '#4d3018';
-                ctx.fillRect(cx - 8, cy + 2, 16, 20);
-
-                ctx.fillStyle =
-                    timeline === 'PAST'
-                        ? decor > 0.96
-                            ? '#d47a2c'
-                            : '#b88628'
-                        : '#256636';
-                ctx.beginPath();
-                ctx.arc(cx, cy - 6, 25, 0, Math.PI * 2);
-                ctx.fill();
-
-                ctx.fillStyle = timeline === 'PAST' ? '#eb9e38' : '#338549';
-                ctx.beginPath();
-                ctx.arc(cx - 6, cy - 12, 16, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-    },
-
-    _drawWeatherParticles: function (ctx, camX, camY, camW, camH, timeline, now) {
-        if (!this.weatherParticles || this.weatherParticles.length === 0) {
-            this._initWeatherParticles();
-        }
-
-        const dt = Math.min(0.05, Math.max(0.001, now - (this._lastWeatherTime || now)));
-        this._lastWeatherTime = now;
-
-        ctx.save();
-
-        for (let i = 0; i < this.weatherParticles.length; i++) {
-            const p = this.weatherParticles[i];
-
-            if (timeline === 'PAST') {
-                p.x += (45 + Math.sin(now + p.phase) * 18) * dt;
-                p.y += (28 + (i % 5) * 6) * dt;
-            } else if (timeline === 'PRESENT') {
-                p.x += Math.cos(now * 1.4 + p.phase) * 22 * dt;
-                p.y += Math.sin(now * 1.1 + p.phase) * 18 * dt;
-            } else {
-                p.y += (165 + (i % 7) * 28) * dt;
-            }
-
-            if (p.x < 0) p.x += camW;
-            if (p.x > camW) p.x -= camW;
-            if (p.y < 0) p.y += camH;
-            if (p.y > camH) p.y -= camH;
-
-            const wx = camX + p.x;
-            const wy = camY + p.y;
-
-            if (timeline === 'PAST') {
-                if (i % 3 === 0) {
-                    ctx.save();
-                    ctx.translate(wx, wy);
-                    ctx.rotate(now * p.spinSpeed + p.phase);
-                    ctx.fillStyle = i % 6 === 0 ? 'rgba(218, 105, 42, 0.8)' : 'rgba(235, 175, 55, 0.8)';
+                for (let arm = 0; arm < 3; arm++) {
+                    ctx.rotate((Math.PI * 2) / 3);
                     ctx.beginPath();
-                    ctx.ellipse(0, 0, p.size * 1.5, p.size * 0.75, 0, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.restore();
-                } else {
-                    ctx.fillStyle = `rgba(240, 200, 140, ${p.alpha * 0.65})`;
-                    ctx.beginPath();
-                    ctx.arc(wx, wy, p.size * 0.65, 0, Math.PI * 2);
-                    ctx.fill();
-                }
-            } else if (timeline === 'PRESENT') {
-                if (i % 2 === 0) {
-                    const glow = 0.35 + 0.65 * Math.abs(Math.sin(now * 3 + p.phase));
-                    ctx.fillStyle = `rgba(140, 255, 100, ${glow})`;
-                    ctx.beginPath();
-                    ctx.arc(wx, wy, p.size * 0.85, 0, Math.PI * 2);
-                    ctx.fill();
-                } else {
-                    ctx.save();
-                    ctx.translate(wx, wy);
-                    ctx.rotate(now + p.phase);
-                    ctx.fillStyle = 'rgba(255, 195, 215, 0.78)';
-                    ctx.beginPath();
-                    ctx.ellipse(0, 0, p.size * 1.2, p.size * 0.65, 0, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.restore();
-                }
-            } else {
-                if (i % 4 === 0) {
-                    ctx.fillStyle = 'rgba(0, 255, 180, 0.72)';
-                    ctx.font = '11px monospace';
-                    ctx.fillText(p.glyph, wx, wy);
-                } else {
-                    ctx.strokeStyle =
-                        i % 5 === 0 ? 'rgba(255, 0, 170, 0.75)' : 'rgba(0, 240, 255, 0.65)';
-                    ctx.lineWidth = 1.5;
-                    ctx.beginPath();
-                    ctx.moveTo(wx, wy - 10);
-                    ctx.lineTo(wx, wy + 4);
+                    ctx.arc(12, 0, p.radius * 0.6, 0, Math.PI * 0.9);
                     ctx.stroke();
                 }
+                ctx.restore();
+
+                if (!ready) {
+                    ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+                    ctx.beginPath();
+                    ctx.arc(px, py, p.radius * 0.7, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = "#ffffff";
+                    ctx.font = "bold 13px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(`${Math.ceil(p.cooldown)}s`, px, py);
+                }
+                ctx.restore();
             }
         }
 
-        ctx.restore();
-    },
+        /* ---------------------------------------------------------------------- */
+        /* VẼ IV.4: CÂY NHÂN QUẢ (ETERNITY TREE)                                 */
+        /* ---------------------------------------------------------------------- */
+        _drawEternityTree(ctx, camera) {
+            const tree = this.eternityTree;
+            if (!tree) return;
 
-    // ========================================================================
-    // MINIMAP: HIỂN THỊ QUÁI, BOSS, ĐÀI TẾ & KHE NỨT THỜI GIAN
-    // ========================================================================
-    drawMinimap: function (ctx, canvasWidth, canvasHeight) {
-        if (!this._initialized) this.init();
+            const tx = tree.x - camera.x;
+            const ty = tree.y - camera.y;
 
-        const cw = canvasWidth || (ctx.canvas && ctx.canvas.width) || window.innerWidth || 1280;
-        const ch = canvasHeight || (ctx.canvas && ctx.canvas.height) || window.innerHeight || 720;
+            if (tx + 120 < 0 || tx - 120 > camera.width ||
+                ty + 140 < 0 || ty - 140 > camera.height) return;
 
-        const state = window.Game.state || {
-            timeline: 'PRESENT',
-            isTreePlanted: false,
-            chestOiled: false,
-            chestOpened: false,
-            unlockedWaypoints: [true, false, false]
-        };
-        const timeline = state.timeline || 'PRESENT';
-        const now = performance.now() * 0.001;
-        const player = window.Game.player;
+            ctx.save();
 
-        const isMobile = cw <= 900 || ch <= 550;
-        const mapSize = isMobile ? 104 : 148;
-        const mapX = 12;
-        const mapY = 12;
-        const cornerRadius = isMobile ? 8 : 11;
+            if (this.currentEra === WORLD_CONSTANTS.ERAS.PAST) {
+                if (!tree.isPlanted) {
+                    ctx.strokeStyle = "rgba(112, 224, 0, 0.75)";
+                    ctx.setLineDash([6, 6]);
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(tx, ty, 30, 0, Math.PI * 2);
+                    ctx.stroke();
 
-        const scaleX = mapSize / this.width;
-        const scaleY = mapSize / this.height;
-        const centerX = mapX + mapSize / 2;
-        const centerY = mapY + mapSize / 2;
+                    ctx.fillStyle = "#70e000";
+                    ctx.font = "12px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText("ĐIỂM GIEO MẦM", tx, ty - 38);
+                } else {
+                    ctx.fillStyle = "#38b000";
+                    ctx.beginPath();
+                    ctx.arc(tx, ty, 14, 0, Math.PI * 2);
+                    ctx.fill();
 
-        let combatDetected = false;
-        const enemyList = this._getActiveEnemiesList();
+                    ctx.strokeStyle = "#5a3d28";
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.moveTo(tx, ty);
+                    ctx.lineTo(tx, ty - 16);
+                    ctx.stroke();
+                }
+            } else if (this.currentEra === WORLD_CONSTANTS.ERAS.PRESENT) {
+                if (tree.isPlanted) {
+                    ctx.fillStyle = "#4a3319";
+                    ctx.fillRect(tx - 10, ty - 38, 20, 48);
 
-        if (player && typeof player.x === 'number' && typeof player.y === 'number') {
-            for (let i = 0; i < enemyList.length; i++) {
-                const e = enemyList[i];
-                if (!e || e.dead || e.isDead || (typeof e.hp === 'number' && e.hp <= 0)) continue;
-                if (e.timeline && e.timeline !== 'ALL' && e.timeline !== timeline) continue;
+                    ctx.fillStyle = "#2d6a4f";
+                    ctx.beginPath();
+                    ctx.arc(tx, ty - 45, 42, 0, Math.PI * 2);
+                    ctx.fill();
 
-                const dist = Math.hypot(e.x - player.x, e.y - player.y);
-                if (dist <= 350) {
-                    const recentlyHit = (now - (e.lastHitTime || 0)) <= 3.0;
-                    const isAttacking = (e.attackCd && e.attackCd > 0) || e.kamikazeActive || e.isDashing;
+                    ctx.fillStyle = "#52b788";
+                    ctx.beginPath();
+                    ctx.arc(tx - 14, ty - 52, 24, 0, Math.PI * 2);
+                    ctx.arc(tx + 14, ty - 50, 26, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            } else if (this.currentEra === WORLD_CONSTANTS.ERAS.FUTURE) {
+                if (tree.isPlanted) {
+                    ctx.fillStyle = "#2f1b0c";
+                    ctx.fillRect(tx - 16, ty - 65, 32, 75);
 
-                    if (recentlyHit || isAttacking || dist <= 160) {
-                        combatDetected = true;
-                        break;
+                    const gradFoliage = ctx.createRadialGradient(tx, ty - 75, 10, tx, ty - 75, 68);
+                    gradFoliage.addColorStop(0, "#ffd166");
+                    gradFoliage.addColorStop(0.5, "#06d6a0");
+                    gradFoliage.addColorStop(1, "#118ab2");
+
+                    ctx.fillStyle = gradFoliage;
+                    ctx.beginPath();
+                    ctx.arc(tx, ty - 75, 68, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    if (tree.hasFruit) {
+                        ctx.fillStyle = "#ff0054";
+                        ctx.shadowColor = "#ff5400";
+                        ctx.shadowBlur = 15;
+                        ctx.beginPath();
+                        ctx.arc(tx - 18, ty - 85, 9, 0, Math.PI * 2);
+                        ctx.arc(tx + 22, ty - 70, 9, 0, Math.PI * 2);
+                        ctx.arc(tx, ty - 50, 9, 0, Math.PI * 2);
+                        ctx.fill();
                     }
                 }
             }
-        }
-        this.isPlayerInCombat = combatDetected;
-
-        const themeColor =
-            timeline === 'PAST'
-                ? '#f59e0b'
-                : timeline === 'PRESENT'
-                ? '#10b981'
-                : '#00f5ff';
-
-        const bgFill =
-            timeline === 'PAST'
-                ? 'rgba(24, 16, 8, 0.88)'
-                : timeline === 'PRESENT'
-                ? 'rgba(8, 22, 16, 0.88)'
-                : 'rgba(5, 10, 24, 0.90)';
-
-        ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-        ctx.save();
-        ctx.beginPath();
-        if (typeof ctx.roundRect === 'function') {
-            ctx.roundRect(mapX, mapY, mapSize, mapSize, cornerRadius);
-        } else {
-            ctx.rect(mapX, mapY, mapSize, mapSize);
-        }
-        ctx.fillStyle = bgFill;
-        ctx.fill();
-        ctx.clip();
-
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
-        ctx.lineWidth = 1;
-        for (let g = 1; g < 4; g++) {
-            const offset = (mapSize / 4) * g;
-            ctx.beginPath();
-            ctx.moveTo(mapX + offset, mapY);
-            ctx.lineTo(mapX + offset, mapY + mapSize);
-            ctx.moveTo(mapX, mapY + offset);
-            ctx.lineTo(mapX + mapSize, mapY + offset);
-            ctx.stroke();
+            ctx.restore();
         }
 
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.09)';
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, mapSize * 0.24, 0, Math.PI * 2);
-        ctx.arc(centerX, centerY, mapSize * 0.44, 0, Math.PI * 2);
-        ctx.stroke();
+        /* ---------------------------------------------------------------------- */
+        /* VẼ IV.1: ĐÀI CẦU NGUYỆN NHÂN QUẢ (TEMPORAL SHRINES)                     */
+        /* ---------------------------------------------------------------------- */
+        _drawTemporalShrines(ctx, camera) {
+            for (let i = 0; i < this.shrines.length; i++) {
+                const s = this.shrines[i];
+                const sx = s.x - camera.x;
+                const sy = s.y - camera.y;
 
-        const abyssY = mapY + (this.ABYSS_ROW * this.tileSize + 32) * scaleY;
-        ctx.strokeStyle = timeline === 'FUTURE' ? 'rgba(0, 229, 255, 0.7)' : 'rgba(255, 65, 65, 0.7)';
-        ctx.lineWidth = isMobile ? 2 : 3;
-        ctx.beginPath();
-        ctx.moveTo(mapX, abyssY);
-        ctx.lineTo(mapX + mapSize, abyssY);
-        ctx.stroke();
-
-        const bridgeX = mapX + (this.BRIDGE_TILE.x * this.tileSize + 32) * scaleX;
-        ctx.fillStyle = timeline === 'PAST' ? '#ffb74d' : '#64748b';
-        ctx.fillRect(bridgeX - 3, abyssY - 3, 6, 6);
-
-        const treeBridgeX = mapX + (this.TREE_BRIDGE_TILE.x * this.tileSize + 32) * scaleX;
-        if (state.isTreePlanted) {
-            ctx.fillStyle = '#2ecc71';
-            ctx.fillRect(treeBridgeX - 3, abyssY - 3, 6, 6);
-        } else {
-            ctx.fillStyle = '#a1887f';
-            ctx.fillRect(treeBridgeX - 2, abyssY + 1, 4, 3);
-        }
-
-        for (let i = 0; i < this.anomalies.length; i++) {
-            const anom = this.anomalies[i];
-            const ax = mapX + anom.x * scaleX;
-            const ay = mapY + anom.y * scaleY;
-            ctx.strokeStyle = anom.type === 'SPEED' ? 'rgba(0, 245, 255, 0.72)' : 'rgba(200, 80, 255, 0.72)';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.arc(ax, ay, isMobile ? 3 : 4, 0, Math.PI * 2);
-            ctx.stroke();
-        }
-
-        // ĐÀI NĂNG LƯỢNG (SHRINES)
-        for (let s = 0; s < this.shrines.length; s++) {
-            const sh = this.shrines[s];
-            const sx = mapX + sh.x * scaleX;
-            const sy = mapY + sh.y * scaleY;
-
-            ctx.fillStyle = sh.type === 'WAR' ? '#f59e0b' : '#00f5ff';
-            ctx.beginPath();
-            ctx.arc(sx, sy, isMobile ? 3.2 : 4.0, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 1.0;
-            ctx.stroke();
-        }
-
-        // KHE NỨT THỜI GIAN TRÊN RADAR
-        for (let rf = 0; rf < this.timeRifts.length; rf++) {
-            const rift = this.timeRifts[rf];
-            const rx = mapX + rift.x * scaleX;
-            const ry = mapY + rift.y * scaleY;
-
-            ctx.fillStyle = rift.type === 'TIME_SLOW' ? '#38bdf8' : '#f43f5e';
-            ctx.beginPath();
-            ctx.arc(rx, ry, isMobile ? 2.8 : 3.5, 0, Math.PI * 2);
-            ctx.fill();
-        }
-
-        const chestMX = mapX + (this.CHEST_TILE.x * this.tileSize + 32) * scaleX;
-        const chestMY = mapY + (this.CHEST_TILE.y * this.tileSize + 32) * scaleY;
-        ctx.fillStyle = state.chestOpened ? '#64748b' : state.chestOiled ? '#fde047' : '#f97316';
-        ctx.fillRect(chestMX - 2.5, chestMY - 2.5, 5, 5);
-        if (!state.chestOpened) {
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 0.8;
-            ctx.strokeRect(chestMX - 2.5, chestMY - 2.5, 5, 5);
-        }
-
-        const unlockedList = state.unlockedWaypoints || [true, false, false];
-        for (let i = 0; i < this.waypoints.length; i++) {
-            const wp = this.waypoints[i];
-            const wx = mapX + wp.x * scaleX;
-            const wy = mapY + wp.y * scaleY;
-            const isUnlocked = !!unlockedList[wp.index];
-
-            ctx.fillStyle = isUnlocked ? '#00ffcc' : '#94a3b8';
-            ctx.beginPath();
-            ctx.moveTo(wx, wy - 3.5);
-            ctx.lineTo(wx + 3.5, wy);
-            ctx.lineTo(wx, wy + 3.5);
-            ctx.lineTo(wx - 3.5, wy);
-            ctx.closePath();
-            ctx.fill();
-        }
-
-        // BIỂU TƯỢNG PHÂN HÓA QUÁI VẬT
-        for (let i = 0; i < enemyList.length; i++) {
-            const e = enemyList[i];
-            if (!e || e.dead || e.isDead || (typeof e.hp === 'number' && e.hp <= 0)) continue;
-            if (e.timeline && e.timeline !== 'ALL' && e.timeline !== timeline) continue;
-
-            const ex = mapX + Math.max(4, Math.min(mapSize - 4, e.x * scaleX));
-            const ey = mapY + Math.max(4, Math.min(mapSize - 4, e.y * scaleY));
-
-            const isBoss = !!(e.isBoss || e.type === 'boss' || e.rank === 'BOSS' || (e.maxHp && e.maxHp >= 1000));
-            const isMiniBoss = !!e.isMiniBoss;
-            const isElite = !isBoss && !isMiniBoss && !!(e.isElite || e.type === 'ELITE' || e.rank === 'ELITE' || (e.maxHp && e.maxHp >= 260));
-
-            if (isBoss) {
-                const bossPulse = (isMobile ? 3.8 : 4.8) + Math.sin(now * 8) * 1.4;
-                ctx.fillStyle = Math.floor(now * 6) % 2 === 0 ? '#ff1744' : '#d500f9';
-                ctx.beginPath();
-                ctx.arc(ex, ey, bossPulse, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 1.2;
-                ctx.stroke();
-            } else if (isMiniBoss) {
-                ctx.save();
-                ctx.translate(ex, ey);
-                ctx.rotate(now * 2.5);
-
-                const starSize = isMobile ? 4.5 : 5.8;
-                ctx.fillStyle = '#c084fc';
-                ctx.strokeStyle = '#fde047';
-                ctx.lineWidth = 1.2;
-
-                ctx.beginPath();
-                ctx.moveTo(0, -starSize);
-                ctx.lineTo(starSize * 0.35, -starSize * 0.35);
-                ctx.lineTo(starSize, 0);
-                ctx.lineTo(starSize * 0.35, starSize * 0.35);
-                ctx.lineTo(0, starSize);
-                ctx.lineTo(-starSize * 0.35, starSize * 0.35);
-                ctx.lineTo(-starSize, 0);
-                ctx.lineTo(-starSize * 0.35, -starSize * 0.35);
-                ctx.closePath();
-                ctx.fill();
-                ctx.stroke();
-
-                ctx.restore();
-            } else if (e.isTanker || e.role === 'tanker' || e.subType === 'golem' || e.subType === 'shield_robot') {
-                const sw = isMobile ? 3.2 : 4.0;
-                const sh = isMobile ? 4.0 : 5.0;
+                if (sx + s.radius + 40 < 0 || sx - s.radius - 40 > camera.width ||
+                    sy + s.radius + 40 < 0 || sy - s.radius - 40 > camera.height) continue;
 
                 ctx.save();
-                ctx.translate(ex, ey);
-                ctx.fillStyle = '#ea580c';
-                ctx.strokeStyle = '#fde047';
-                ctx.lineWidth = 1;
-
+                ctx.fillStyle = "#2b2d42";
                 ctx.beginPath();
-                ctx.moveTo(-sw, -sh * 0.7);
-                ctx.lineTo(sw, -sh * 0.7);
-                ctx.lineTo(sw, 0);
-                ctx.lineTo(0, sh);
-                ctx.lineTo(-sw, 0);
-                ctx.closePath();
+                ctx.arc(sx, sy, s.radius, 0, Math.PI * 2);
                 ctx.fill();
+                ctx.strokeStyle = s.color;
+                ctx.lineWidth = 3;
                 ctx.stroke();
-                ctx.restore();
-            } else if (e.isKiter || e.role === 'kiter' || e.subType === 'shaman' || e.subType === 'sniper_robot') {
-                const arrowAngle = typeof e.facingAngle === 'number' ? e.facingAngle : 0;
-                const arrowSize = isMobile ? 3.5 : 4.5;
 
                 ctx.save();
-                ctx.translate(ex, ey);
-                ctx.rotate(arrowAngle);
-                ctx.fillStyle = isElite ? '#facc15' : '#ef4444';
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 0.8;
+                ctx.translate(sx, sy);
+                ctx.rotate(s.runeAngle);
+                ctx.strokeStyle = s.glowColor;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(-s.radius * 0.55, -s.radius * 0.55, s.radius * 1.1, s.radius * 1.1);
+                ctx.restore();
 
+                if (s.activeBeamTimer > 0) {
+                    ctx.fillStyle = s.glowColor;
+                    ctx.fillRect(sx - 16, sy - 400, 32, 400);
+                }
+
+                if (s.cooldown > 0) {
+                    ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, s.radius, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = "#ffffff";
+                    ctx.font = "bold 13px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(`${Math.ceil(s.cooldown)}s`, sx, sy);
+                }
+                ctx.restore();
+            }
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* VẼ IV.8: RƯƠNG BÁU NGHỊCH LÝ & CỘT ẤN KÝ                               */
+        /* ---------------------------------------------------------------------- */
+        _drawParadoxVaultAndSeals(ctx, camera) {
+            if (!this.paradoxVault) return;
+            const pv = this.paradoxVault;
+
+            const seals = pv.pillarSeals;
+            const currentSeal = seals[this.currentEra];
+            if (currentSeal) {
+                const cx = currentSeal.x - camera.x;
+                const cy = currentSeal.y - camera.y;
+
+                if (cx + 50 >= 0 && cx - 50 <= camera.width && cy + 50 >= 0 && cy - 50 <= camera.height) {
+                    ctx.save();
+                    ctx.fillStyle = currentSeal.activated ? currentSeal.color : "#3a3a40";
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, currentSeal.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = currentSeal.color;
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+
+                    ctx.fillStyle = "#ffffff";
+                    ctx.font = "11px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText(currentSeal.activated ? "ĐÃ KÍCH HOẠT" : "ẤN KÝ", cx, cy + 4);
+                    ctx.restore();
+                }
+            }
+
+            const vx = pv.x - camera.x;
+            const vy = pv.y - camera.y;
+
+            if (vx + 60 >= 0 && vx - 60 <= camera.width && vy + 60 >= 0 && vy - 60 <= camera.height) {
+                ctx.save();
+                ctx.fillStyle = pv.isOpened ? "#343a40" : (pv.isUnlocked ? "#d4af37" : "#495057");
+                ctx.fillRect(vx - 24, vy - 18, 48, 36);
+
+                ctx.strokeStyle = pv.isUnlocked ? "#fff3b0" : "#212529";
+                ctx.lineWidth = 3;
+                ctx.strokeRect(vx - 24, vy - 18, 48, 36);
+
+                ctx.fillStyle = pv.isOpened ? "#212529" : (pv.isUnlocked ? "#ffffff" : "#adb5bd");
                 ctx.beginPath();
-                ctx.moveTo(arrowSize, 0);
-                ctx.lineTo(-arrowSize * 0.8, -arrowSize * 0.7);
-                ctx.lineTo(-arrowSize * 0.3, 0);
-                ctx.lineTo(-arrowSize * 0.8, arrowSize * 0.7);
-                ctx.closePath();
+                ctx.arc(vx, vy, 5, 0, Math.PI * 2);
+                ctx.fill();
+
+                if (!pv.isUnlocked) {
+                    ctx.fillStyle = "#ff4d4d";
+                    ctx.font = "bold 11px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText("KHÓA (CẦN 3 ẤN)", vx, vy - 26);
+                } else if (!pv.isOpened) {
+                    ctx.fillStyle = "#ffd700";
+                    ctx.font = "bold 11px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText("MỞ KHÓA!", vx, vy - 26);
+                }
+                ctx.restore();
+            }
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* VẼ IV.6: TRỤ PHÁO LASER TỰ ĐỘNG                                       */
+        /* ---------------------------------------------------------------------- */
+        _drawAutoTurrets(ctx, camera) {
+            if (this.currentEra !== WORLD_CONSTANTS.ERAS.FUTURE) return;
+
+            for (let i = 0; i < this.autoTurrets.length; i++) {
+                const turret = this.autoTurrets[i];
+                const tx = turret.x - camera.x;
+                const ty = turret.y - camera.y;
+
+                if (tx + turret.radius + 30 < 0 || tx - turret.radius - 30 > camera.width ||
+                    ty + turret.radius + 30 < 0 || ty - turret.radius - 30 > camera.height) continue;
+
+                ctx.save();
+                ctx.fillStyle = "#1e293b";
+                ctx.beginPath();
+                ctx.arc(tx, ty, turret.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = turret.isRepaired ? "#00f0ff" : "#ef4444";
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                if (turret.isRepaired) {
+                    ctx.save();
+                    ctx.translate(tx, ty);
+                    ctx.rotate(turret.barrelAngle);
+                    ctx.fillStyle = "#38bdf8";
+                    ctx.fillRect(0, -5, 26, 10);
+                    ctx.restore();
+
+                    if (turret.laserBeamVisual) {
+                        const b = turret.laserBeamVisual;
+                        ctx.strokeStyle = "#00f0ff";
+                        ctx.lineWidth = 3.5;
+                        ctx.beginPath();
+                        ctx.moveTo(b.startX - camera.x, b.startY - camera.y);
+                        ctx.lineTo(b.targetX - camera.x, b.targetY - camera.y);
+                        ctx.stroke();
+                    }
+                } else {
+                    ctx.fillStyle = "#f87171";
+                    ctx.font = "bold 11px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.fillText("HỎNG", tx, ty + 4);
+                }
+                ctx.restore();
+            }
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* VẼ IV.3: BÃO SẤM SÉT THỜI KHÔNG                                        */
+        /* ---------------------------------------------------------------------- */
+        _drawTemporalStorms(ctx, camera) {
+            for (let i = 0; i < this.storms.length; i++) {
+                const storm = this.storms[i];
+                const sx = storm.x - camera.x;
+                const sy = storm.y - camera.y;
+
+                if (sx + storm.radius < 0 || sx - storm.radius > camera.width ||
+                    sy + storm.radius < 0 || sy - storm.radius > camera.height) continue;
+
+                ctx.save();
+                if (storm.state === "WARNING") {
+                    ctx.strokeStyle = "rgba(0, 240, 255, 0.7)";
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, storm.radius, 0, Math.PI * 2);
+                    ctx.stroke();
+
+                    ctx.fillStyle = `rgba(0, 240, 255, ${0.12 * storm.warningProgress})`;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, storm.radius * storm.warningProgress, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (storm.state === "STRIKE") {
+                    ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, storm.radius, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    if (storm.arcs && storm.arcs.length > 1) {
+                        ctx.strokeStyle = "#ffffff";
+                        ctx.lineWidth = 4;
+                        ctx.beginPath();
+                        ctx.moveTo(storm.arcs[0].x - camera.x, storm.arcs[0].y - camera.y);
+                        for (let a = 1; a < storm.arcs.length; a++) {
+                            ctx.lineTo(storm.arcs[a].x - camera.x, storm.arcs[a].y - camera.y);
+                        }
+                        ctx.stroke();
+                    }
+                }
+                ctx.restore();
+            }
+        }
+
+        /* ---------------------------------------------------------------------- */
+        /* VẼ ĐÁ NỔI KHÔNG TRỌNG LỰC & HẠT THỜI TIẾT                              */
+        /* ---------------------------------------------------------------------- */
+        _drawFloatingRocks(ctx, camera) {
+            if (this.currentEra !== WORLD_CONSTANTS.ERAS.FUTURE) return;
+
+            for (let i = 0; i < this.floatingRocks.length; i++) {
+                const r = this.floatingRocks[i];
+                const rx = r.x - camera.x;
+                const ry = r.y - camera.y;
+
+                if (rx + r.size < 0 || rx - r.size > camera.width ||
+                    ry + r.size < 0 || ry - r.size > camera.height) continue;
+
+                ctx.save();
+                ctx.translate(rx, ry);
+                ctx.rotate(r.rotation);
+                ctx.fillStyle = "#3a405a";
+                ctx.strokeStyle = "#68507b";
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.rect(-r.size / 2, -r.size / 2, r.size, r.size);
                 ctx.fill();
                 ctx.stroke();
                 ctx.restore();
-            } else if (isElite) {
-                ctx.fillStyle = '#ff9100';
-                ctx.beginPath();
-                ctx.arc(ex, ey, isMobile ? 2.8 : 3.5, 0, Math.PI * 2);
-                ctx.fill();
-            } else {
-                ctx.fillStyle = '#ff3b30';
-                ctx.beginPath();
-                ctx.arc(ex, ey, isMobile ? 1.9 : 2.3, 0, Math.PI * 2);
-                ctx.fill();
             }
         }
 
-        // Kim cương chỉ mục tiêu Nhiệm vụ
-        if (player) {
-            const target = this._getObjectiveTarget(player, state);
-            if (target) {
-                const tox = mapX + Math.max(5, Math.min(mapSize - 5, target.x * scaleX));
-                const toy = mapY + Math.max(5, Math.min(mapSize - 5, target.y * scaleY));
+        _drawWeatherParticles(ctx, camera) {
+            if (this._isUltraPerformance()) return;
 
-                const tPulse = (isMobile ? 3.0 : 3.8) + Math.sin(now * 6) * 1.3;
-                ctx.strokeStyle = target.color;
-                ctx.lineWidth = 1.2;
-                ctx.beginPath();
-                ctx.arc(tox, toy, tPulse + 2.2, 0, Math.PI * 2);
-                ctx.stroke();
+            ctx.save();
+            ctx.fillStyle = "rgba(200, 240, 255, 0.4)";
+            for (let i = 0; i < this.weatherParticles.length; i++) {
+                const p = this.weatherParticles[i];
+                const px = p.x - camera.x;
+                const py = p.y - camera.y;
 
-                ctx.fillStyle = target.color;
-                ctx.beginPath();
-                ctx.moveTo(tox, toy - tPulse);
-                ctx.lineTo(tox + tPulse, toy);
-                ctx.lineTo(tox, toy + tPulse);
-                ctx.lineTo(tox - tPulse, toy);
-                ctx.closePath();
-                ctx.fill();
+                if (px < 0 || px > camera.width || py < 0 || py > camera.height) continue;
+
+                ctx.fillRect(px, py, p.size, p.size * 2);
             }
+            ctx.restore();
         }
 
-        // Người chơi
-        let playerTileX = 30;
-        let playerTileY = 30;
-        if (player) {
-            playerTileX = Math.max(0, Math.min(this.cols - 1, Math.floor(player.x / this.tileSize)));
-            playerTileY = Math.max(0, Math.min(this.rows - 1, Math.floor(player.y / this.tileSize)));
+        /* ---------------------------------------------------------------------- */
+        /* VẼ MINIMAP HUD (BẢN ĐỒ THU NHỎ GÓC MÀN HÌNH)                          */
+        /* ---------------------------------------------------------------------- */
+        drawMinimap(ctx, player, enemies = []) {
+    if (!ctx) return;
 
-            const px = mapX + Math.max(4, Math.min(mapSize - 4, player.x * scaleX));
-            const py = mapY + Math.max(4, Math.min(mapSize - 4, player.y * scaleY));
+    // Lấy player đúng cách dù tham số thứ 2 truyền vào là screenWidth hay player object
+    const p = (player && typeof player.x === 'number') ? player : window.Game.player;
+    const ens = (Array.isArray(enemies) && enemies.length > 0) 
+        ? enemies 
+        : ((window.Game.Enemies && window.Game.Enemies.list) || []);
 
-            let facingAngle = typeof player.angle === 'number' ? player.angle : 0;
-            if (Math.hypot(player.vx || 0, player.vy || 0) > 5) {
-                facingAngle = Math.atan2(player.vy, player.vx);
-            }
+    const mapSize = this.minimapExpanded ? 240 : 130;
+    const margin = 18;
+    const mmX = ctx.canvas.width - mapSize - margin;
+    const mmY = margin;
+    const scale = mapSize / this.width;
 
-            const coneLen = isMobile ? 16 : 22;
-            const coneSpread = 0.48;
-            const coneGrad = ctx.createRadialGradient(px, py, 1, px, py, coneLen);
-            coneGrad.addColorStop(0, 'rgba(0, 245, 255, 0.50)');
-            coneGrad.addColorStop(1, 'rgba(0, 245, 255, 0.0)');
+    ctx.save();
+    ctx.fillStyle = "rgba(10, 15, 25, 0.85)";
+    ctx.fillRect(mmX, mmY, mapSize, mapSize);
+    ctx.strokeStyle = "#00f0ff";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(mmX, mmY, mapSize, mapSize);
 
-            ctx.fillStyle = coneGrad;
-            ctx.beginPath();
-            ctx.moveTo(px, py);
-            ctx.arc(px, py, coneLen, facingAngle - coneSpread, facingAngle + coneSpread);
-            ctx.closePath();
-            ctx.fill();
-
-            const radarRing = 3 + ((now * 8) % 6);
-            ctx.strokeStyle = `rgba(0, 245, 255, ${1 - (radarRing - 3) / 6})`;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.arc(px, py, radarRing, 0, Math.PI * 2);
-            ctx.stroke();
-
-            ctx.fillStyle = '#00f5ff';
-            ctx.shadowColor = '#00f5ff';
-            ctx.shadowBlur = 6;
-            ctx.beginPath();
-            ctx.arc(px, py, isMobile ? 3.0 : 3.8, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
-
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-        }
-
-        // Quét Radar Quân Sự
-        const sweepAngle = (now * 1.65) % (Math.PI * 2);
-        const sweepRadius = mapSize * 0.72;
-
-        ctx.save();
-        ctx.translate(centerX, centerY);
-        ctx.rotate(sweepAngle);
-
-        const sectorGrad = ctx.createLinearGradient(0, 0, sweepRadius, 0);
-        if (timeline === 'PAST') {
-            sectorGrad.addColorStop(0, 'rgba(245, 158, 11, 0.25)');
-            sectorGrad.addColorStop(1, 'rgba(245, 158, 11, 0.02)');
-        } else if (timeline === 'PRESENT') {
-            sectorGrad.addColorStop(0, 'rgba(16, 185, 129, 0.25)');
-            sectorGrad.addColorStop(1, 'rgba(16, 185, 129, 0.02)');
-        } else {
-            sectorGrad.addColorStop(0, 'rgba(0, 245, 255, 0.25)');
-            sectorGrad.addColorStop(1, 'rgba(0, 245, 255, 0.02)');
-        }
-
-        ctx.fillStyle = sectorGrad;
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.arc(0, 0, sweepRadius, -0.38, 0);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.strokeStyle = themeColor;
-        ctx.lineWidth = 1.3;
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(sweepRadius, 0);
-        ctx.stroke();
-        ctx.restore();
-
-        // Thanh thông số
-        const barH = isMobile ? 16 : 20;
-        const barY = mapY + mapSize - barH;
-        ctx.fillStyle = 'rgba(4, 8, 18, 0.82)';
-        ctx.fillRect(mapX, barY, mapSize, barH);
-
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(mapX, barY);
-        ctx.lineTo(mapX + mapSize, barY);
-        ctx.stroke();
-
-        const eraLabel =
-            timeline === 'PAST'
-                ? 'QUÁ KHỨ'
-                : timeline === 'PRESENT'
-                ? 'HIỆN TẠI'
-                : 'TƯƠNG LAI';
-        const coordLabel = `X:${playerTileX} Y:${playerTileY}`;
-
-        ctx.font = isMobile ? 'bold 8px sans-serif' : 'bold 9.5px sans-serif';
-        ctx.textBaseline = 'middle';
-
-        ctx.fillStyle = themeColor;
-        ctx.textAlign = 'left';
-        ctx.fillText(eraLabel, mapX + 5, barY + barH / 2 + 0.5);
-
-        ctx.fillStyle = '#ffffff';
-        ctx.textAlign = 'right';
-        ctx.fillText(coordLabel, mapX + mapSize - 5, barY + barH / 2 + 0.5);
-
-        ctx.restore();
-
-        // Viền radar
-        ctx.save();
-        ctx.strokeStyle = themeColor;
-        ctx.lineWidth = isMobile ? 1.8 : 2.2;
-        ctx.shadowColor = themeColor;
-        ctx.shadowBlur = isMobile ? 6 : 10;
-
-        ctx.beginPath();
-        if (typeof ctx.roundRect === 'function') {
-            ctx.roundRect(mapX, mapY, mapSize, mapSize, cornerRadius);
-        } else {
-            ctx.rect(mapX, mapY, mapSize, mapSize);
-        }
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-
-        const bracketLen = isMobile ? 8 : 11;
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(mapX, mapY + bracketLen);
-        ctx.lineTo(mapX, mapY + 2);
-        ctx.lineTo(mapX + bracketLen, mapY);
-        ctx.moveTo(mapX + mapSize - bracketLen, mapY);
-        ctx.lineTo(mapX + mapSize, mapY + 2);
-        ctx.lineTo(mapX + mapSize, mapY + bracketLen);
-        ctx.stroke();
-        ctx.restore();
-
-        ctx.restore();
-    },
-
-    _getActiveEnemiesList: function () {
-        const g = window.Game || {};
-        let list = [];
-
-        if (g.Enemies) {
-            if (Array.isArray(g.Enemies.list)) {
-                list = list.concat(g.Enemies.list);
-            } else if (Array.isArray(g.Enemies.enemies)) {
-                list = list.concat(g.Enemies.enemies);
-            } else if (Array.isArray(g.Enemies)) {
-                list = list.concat(g.Enemies);
-            }
-            if (g.Enemies.boss && typeof g.Enemies.boss === 'object') {
-                list.push(g.Enemies.boss);
-            }
-        }
-
-        if (Array.isArray(g.enemies)) {
-            list = list.concat(g.enemies);
-        }
-
-        if (g.boss && typeof g.boss === 'object') {
-            list.push(g.boss);
-        }
-
-        return list;
-    
-},
-// ========================================================================
-    // TÍNH NĂNG 4: HỆ THỐNG TIỆN ÍCH KIỂM TRA VA CHẠM DỰA TRÊN SPATIAL GRID
-    // ========================================================================
-
-    /**
-     * Kiểm tra va chạm tia/đoạn thẳng từ (x1, y1) đến (x2, y2) với các chướng ngại vật tĩnh
-     * Trả về true nếu đường đi bị chặn bởi tường/đá
-     */
-    checkRaycastBlocked: function (x1, y1, x2, y2, stepSize = 16) {
-        if (!this._initialized) this.init();
-
-        const dx = x2 - x1;
-        const dy = y2 - y1;
-        const dist = Math.hypot(dx, dy);
-        if (dist === 0) return false;
-
-        const steps = Math.ceil(dist / stepSize);
-        const stepX = dx / steps;
-        const stepY = dy / steps;
-
-        for (let i = 1; i <= steps; i++) {
-            const cx = x1 + stepX * i;
-            const cy = y1 + stepY * i;
-            const tx = Math.floor(cx / this.tileSize);
-            const ty = Math.floor(cy / this.tileSize);
-
-            if (!this._isTileWalkable(tx, ty)) {
-                return true;
-            }
-        }
-        return false;
-    },
-
-    /**
-     * Quét nhanh các va chạm giữa đạn người chơi và quái vật thông qua Lưới Không Gian
-     * Gọi trong Combat/Projectile update loop để loại bỏ O(N*M)
-     */
-    resolveProjectileCollisions: function (projectiles, onHitCallback) {
-        if (!this.spatialGrid || !Array.isArray(projectiles)) return;
-
-        for (let i = 0; i < projectiles.length; i++) {
-            const p = projectiles[i];
-            if (!p || p.dead) continue;
-
-            const pRadius = p.radius || 6;
-            // Chỉ truy vấn ô chứa viên đạn
-            const neighbors = this.spatialGrid.queryRadius(p.x, p.y, pRadius + 20);
-
-            for (let j = 0; j < neighbors.length; j++) {
-                const neighbor = neighbors[j];
-
-                // 1. Va chạm đạn với vật cản tĩnh
-                if (neighbor.type === 'OBSTACLE') {
-                    const distSq = (p.x - neighbor.x) ** 2 + (p.y - neighbor.y) ** 2;
-                    const combinedR = pRadius + neighbor.radius;
-                    if (distSq <= combinedR * combinedR) {
-                        p.dead = true;
-                        if (typeof onHitCallback === 'function') {
-                            onHitCallback(p, neighbor, 'OBSTACLE');
-                        }
-                        break;
-                    }
-                }
-
-                // 2. Va chạm đạn với Quái vật
-                if (neighbor.type === 'ENEMY' && p.isPlayerBullet) {
-                    const enemy = neighbor.raw;
-                    if (!enemy || enemy.dead || enemy.isDead) continue;
-
-                    const enemyR = neighbor.radius || 20;
-                    const distSq = (p.x - neighbor.x) ** 2 + (p.y - neighbor.y) ** 2;
-                    const combinedR = pRadius + enemyR;
-
-                    if (distSq <= combinedR * combinedR) {
-                        p.dead = true;
-                        if (typeof onHitCallback === 'function') {
-                            onHitCallback(p, enemy, 'ENEMY');
-                        }
-                        break;
-                    }
-                }
-
-                // 3. Đạn bắn trúng Khe nứt/Trụ năng lượng thời gian để kích hoạt từ xa
-                if (neighbor.type === 'TIME_RIFT') {
-                    const rift = neighbor.raw;
-                    const distSq = (p.x - rift.x) ** 2 + (p.y - rift.y) ** 2;
-                    const combinedR = pRadius + 28;
-
-                    if (distSq <= combinedR * combinedR) {
-                        p.dead = true;
-                        this.triggerTimeRift(rift.id);
-                        if (typeof onHitCallback === 'function') {
-                            onHitCallback(p, rift, 'TIME_RIFT');
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-    },
-
-    /**
-     * Kích hoạt đài tế thủ công từ phím bấm hoặc tương tác UI
-     */
-    activateShrine: function (shrineId) {
-        const sh = this.shrines.find(s => s.id === shrineId);
-        if (!sh || sh.currentCooldown > 0) return false;
-
-        sh.stayTimer = sh.requiredTime;
-        return true;
-    },
-
-    /**
-     * Dọn dẹp bộ nhớ đệm canvas khi thoát game hoặc khởi động lại
-     */
-    destroy: function () {
-        this._cachedBackgrounds.PAST = null;
-        this._cachedBackgrounds.PRESENT = null;
-        this._cachedBackgrounds.FUTURE = null;
-        if (this.spatialGrid) {
-            this.spatialGrid.clear();
-        }
-        this.traps = [];
-        this.weatherParticles = [];
-        this.grid = [];
-        this.decorGrid = [];
-        this._initialized = false;
+    // Điểm tương tác
+    for (let i = 0; i < this.shrines.length; i++) {
+        const s = this.shrines[i];
+        ctx.fillStyle = s.color;
+        ctx.fillRect(mmX + s.x * scale - 2, mmY + s.y * scale - 2, 4, 4);
     }
-};
+
+    if (this.paradoxVault) {
+        ctx.fillStyle = "#ffd700";
+        ctx.fillRect(mmX + this.paradoxVault.x * scale - 2.5, mmY + this.paradoxVault.y * scale - 2.5, 5, 5);
+    }
+
+    // Quái vật
+    ctx.fillStyle = "#ff0055";
+    for (let i = 0; i < ens.length; i++) {
+        const e = ens[i];
+        if (!e || e.dead || e.isDead) continue;
+        ctx.fillRect(mmX + e.x * scale - 1, mmY + e.y * scale - 1, 2, 2);
+    }
+
+    // Người chơi
+    if (p && typeof p.x === 'number') {
+        ctx.fillStyle = "#00ff66";
+        ctx.beginPath();
+        ctx.arc(mmX + p.x * scale, mmY + p.y * scale, 3, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    ctx.restore();
+
+        }
+    }
+
+    /* ========================================================================== */
+/* 4. KHỞI TẠO INSTANCE TOÀN CỤC & XUẤT MODULE                                */
+/* ========================================================================== */
+window.Game.WORLD_CONSTANTS = WORLD_CONSTANTS;
+window.Game.SpatialHashGrid = SpatialHashGrid;
+
+// Tạo instance và gán cho cả World lẫn world để tương thích với tất cả các file
+const worldInstance = new World();
+window.Game.World = worldInstance;
+window.Game.world = worldInstance;
+})();

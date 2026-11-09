@@ -1,30 +1,28 @@
 /**
  * ============================================================================
- * FILE: systems.js - BẢN NÂNG CẤP KIẾN TRÚC HỆ THỐNG TOÀN DIỆN & TỐI ƯU HÓA MOBILE
- * Tựa game: Kẻ Du Hành Thời Không (Time Travel Game)
- * Đơn vị triển khai: Senior Game Architect & Firebase Security Specialist
+ * FILE: systems.js - BẢN NÂNG CẤP KIẾN TRÚC TOÀN DIỆN & TỐI ƯU HIỆU NĂNG CAO
+ * Tựa game: Kẻ Du Hành Thời Không (Time Travel Action RPG)
+ * Phiên bản: 2026.4.0 - Enterprise Systems Architecture
  * ============================================================================
- * DANH MỤC NÂNG CẤP TRỌNG TÂM:
- * 1. XÓA BỎ HOÀN TOÀN LOCALSTORAGE CŨ:
- *    - Toàn bộ cơ chế lưu/tải tiến trình nhân vật phụ thuộc 100% vào Firebase
- *      Realtime Database qua users/{uid}/saveData.
- * 2. AUDIO THROTTLING (CHỐNG GIẬT LAG & SẬP AUDIO CONTEXT TRÊN MOBILE):
- *    - Giới hạn tần suất phát cho từng hiệu ứng âm thanh riêng biệt (tiếng chém,
- *      trúng đòn, súng, nhặt tiền...) tối thiểu 80ms mới được kích hoạt lại.
- * 3. FLOATING TEXT POOLING (CACHE & GỘP VẼ CHỮ SÁT THƯƠNG):
- *    - Dùng Object Pool giới hạn tối đa 20 dòng chữ sát thương cùng lúc.
- *    - Gộp lệnh thay đổi ctx.font đúng 1 lần duy nhất mỗi frame trong hàm render.
- * 4. KỸ NĂNG QUAY NGƯỢC THỜI GIAN (CHRONO REWIND):
- *    - Triển khai Ring Buffer (Mảng vòng) lưu vết vị trí (x, y), máu (hp),
- *      khiên (shield) và nộ trong 3 giây gần nhất (180 frames @ 60 FPS).
- *    - Hỗ trợ hàm kích hoạt Chrono Rewind đảo ngược trạng thái mượt mà.
- * 5. BẢO TOÀN 100% HỆ THỐNG:
- *    - Giữ nguyên toàn bộ Characters, Weapons, Relics, Waypoints, Quests, Admin
- *      Bảo 2010, Realtime Presence, và Giftcodes.
+ * DANH MỤC TÍNH NĂNG & NÂNG CẤP TRỌNG TÂM TRONG PHẦN 1:
+ * 1. FIREBASE REALTIME CLOUD INTEGRATION:
+ *    - Bảo toàn 100% URL Database, project config và presence monitoring.
+ * 2. CHRONO REWIND & HỒI SINH LƯỢNG TỬ (SECOND CHANCE - III.10):
+ *    - Nâng cấp Ring Buffer lên 5.0 giây (300 frames @ 60 FPS).
+ *    - Tự động kích hoạt khi người chơi nhận sát thương kết liễu (hp <= 0),
+ *      đưa người chơi về tọa độ an toàn 5s trước với 50% HP tối đa, miễn phạt mất vàng.
+ * 3. BẢNG XẾP HẠNG CHIẾN LỰC TRỰC TUYẾN (GLOBAL LEADERBOARD - V.5):
+ *    - Ghi nhận và đồng bộ chỉ số Combat Power lên node 'leaderboards/{uid}'.
+ *    - Truy xuất và render Top 20 cao thủ toàn server với thời gian thực.
+ * 4. AUDIO THROTTLING & FLOATING TEXT POOLING:
+ *    - Khử hoàn toàn hiện tượng drop frame trên di động khi nổ âm thanh liên tục.
+ *    - Gộp state vẽ Canvas Floating Text đúng 1 lần duy nhất mỗi frame.
+ * 5. ADMIN BẢO 2010 & CLOUD MONITORING:
+ *    - Xác thực bảo mật, bảng điều khiển Live Server Players và phát quà Realtime.
  * ============================================================================
  */
 
-// DỌN DẸP SẠCH TOÀN BỘ BỘ NHỚ LOCAL/SESSION CŨ NẾU CÒN TỒN TẠI
+// DỌN DẸP SẠCH BỘ NHỚ LOCAL/SESSION CŨ NẾU CÒN TỒN TẠI TRÊN TRÌNH DUYỆT
 try {
     if (typeof window !== 'undefined') {
         if (window.localStorage) window.localStorage.clear();
@@ -37,7 +35,7 @@ try {
 window.Game = window.Game || {};
 
 // ============================================================================
-// CẤU HÌNH FIREBASE REALTIME DATABASE CHÍNH THỨC
+// CẤU HÌNH FIREBASE REALTIME DATABASE CHÍNH THỨC (BẢO TOÀN 100%)
 // ============================================================================
 const firebaseConfig = {
     apiKey: "AIzaSyAjyxbdkwmhCl2uUIrAY2yEL7n7LTOuUp8",
@@ -64,7 +62,7 @@ try {
 }
 
 // ============================================================================
-// 1. CẤU HÌNH NHÂN VẬT (CHARACTERS CONFIG)
+// 1. CẤU HÌNH NHÂN VẬT TIÊU CHUẨN (CHARACTERS CONFIG)
 // ============================================================================
 Game.charactersConfig = {
     time_traveler: {
@@ -73,7 +71,7 @@ Game.charactersConfig = {
         title: 'Bậc Thầy Không Gian',
         role: 'Cận Chiến / Cơ Động',
         avatar: '⚔️',
-        description: 'Cân bằng giữa tấn công cơ động và kiểm soát nhịp độ trận đấu.',
+        description: 'Cân bằng giữa tấn công cơ động, tạo khiên chắn và kiểm soát nhịp độ trận đấu.',
         spriteColor: '#2563eb',
         accentColor: '#38bdf8',
         radius: 20,
@@ -82,7 +80,7 @@ Game.charactersConfig = {
         baseSpeed: 240,
         hpRegen: 2.5,
         shieldRegenRate: 0.05,
-        ccResistance: 0.1,
+        ccResistance: 0.10,
         skills: [
             { id: 'attack', name: 'Trảm Thời Không', cd: 0, maxCd: 0.42, color: '#f39c12', icon: '⚔️', type: 'WEAPON_DRIVEN' },
             { id: 'dash', name: 'Tốc Biến Thời Không', cd: 0, maxCd: 4.5, color: '#00f2fe', icon: '⚡', type: 'RECT_DASH', range: 240 },
@@ -96,7 +94,7 @@ Game.charactersConfig = {
         title: 'Bóng Ma Tốc Độ',
         role: 'Sát Thủ / Tốc Độ Cao',
         avatar: '🗡️',
-        description: 'Tốc chạy cực cao, hồi chiêu nhanh nhưng lượng máu và giáp mỏng.',
+        description: 'Tốc chạy cực cao, chí mạng khủng nhưng lượng máu và khiên mỏng.',
         spriteColor: '#6d28d9',
         accentColor: '#f43f5e',
         radius: 17,
@@ -119,7 +117,7 @@ Game.charactersConfig = {
         title: 'Pháo Đài Bất Hoại',
         role: 'Đỡ Đòn / Hồi Phục Cao',
         avatar: '🛡️',
-        description: 'Máu và giáp cực lớn, kháng hiệu ứng khống chế cao nhưng tốc chạy chậm.',
+        description: 'Máu và giáp cực lớn, kháng khống chế cao, áp đảo cận chiến diện rộng.',
         spriteColor: '#78350f',
         accentColor: '#f59e0b',
         radius: 24,
@@ -139,7 +137,7 @@ Game.charactersConfig = {
 };
 
 // ============================================================================
-// 2. KHỞI TẠO BỘ TRẠNG THÁI TIÊU CHUẨN
+// 2. KHỞI TẠO BỘ TRẠNG THÁI TIÊU CHUẨN (STATE STRUCTS)
 // ============================================================================
 const DEFAULT_CHARACTER_STATS = {
     time_traveler: { level: 1, exp: 0, maxExp: 100, bonusDamage: 0, bonusHp: 0, bonusShield: 0, bonusSpeed: 0 },
@@ -155,7 +153,7 @@ const DEFAULT_GAME_STATE = {
     maxExp: 100,
     potentialPoints: 0,
     rage: 0,
-    maxRage: 100,
+    maxRage: 100, // Có thể mở rộng lên 200 khi trang bị relic_quantum_battery
     chronoFreezeTimer: 0,
     loopLevel: 1,
     timeShards: 0,
@@ -191,6 +189,10 @@ const DEFAULT_GAME_STATE = {
     equippedRelics: [],
     ownedRelics: [],
     hasPet: false,
+    petEvolutionLevel: 0, // Cấp độ tiến hóa Tinh Linh (0: Cơ bản, 1: Nhặt đồ xa, 2: Phóng khiên bảo vệ)
+    petShieldCooldown: 0,
+    secondChanceAvailable: true, // Quyền năng Hồi Sinh Lượng Tử (1 lần mỗi phiên chơi)
+    lastStandCooldown: 0,        // Hồi chiêu 60s của Mặt Dây Chuyền Bất Khuất
     achievements: [],
     currentTitle: 'Kẻ Du Hành Tân Thủ',
     usedGiftcodes: [],
@@ -218,7 +220,7 @@ const DEFAULT_PLAYER_STATE = {
     hitStopTimer: 0,
     screenShake: 0,
     characterId: 'time_traveler',
-    ccResistance: 0.1,
+    ccResistance: 0.10,
     hpRegen: 2.5,
     shieldRegenRate: 0.05,
     skills: []
@@ -229,7 +231,7 @@ Game.player = Object.assign({}, DEFAULT_PLAYER_STATE, Game.player || {});
 Game.camera = Game.camera || { x: 0, y: 0, width: 800, height: 600, zoom: 1.0 };
 
 // ============================================================================
-// 3. AUDIO ENGINE VỚI THROTTLING CHỐNG LAG TRÊN MOBILE (NÂNG CẤP 2)
+// 3. AUDIO ENGINE VỚI THROTTLING CHỐNG LAG TRÊN MOBILE
 // ============================================================================
 Game.Audio = {
     ctx: null,
@@ -249,9 +251,6 @@ Game.Audio = {
         return this.ctx;
     },
 
-    /**
-     * Kiểm tra giãn cách thời gian phát âm thanh để tránh làm ngập AudioContext
-     */
     canPlaySound: function (soundKey) {
         const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
         const last = this._lastPlayTimestamps[soundKey] || 0;
@@ -335,7 +334,7 @@ Game.Audio = {
         osc.type = 'sine';
         osc.frequency.setValueAtTime(987.77, now);
         osc.frequency.setValueAtTime(1318.51, now + 0.07);
-        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.setValueAtTime(0.20, now);
         gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
         osc.connect(gain);
         gain.connect(ctx.destination);
@@ -377,15 +376,33 @@ Game.Audio = {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(180, now);
-        osc.frequency.exponentialRampToValueAtTime(900, now + 0.22);
-        osc.frequency.exponentialRampToValueAtTime(320, now + 0.40);
-        gain.gain.setValueAtTime(0.28, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+        osc.frequency.setValueAtTime(160, now);
+        osc.frequency.exponentialRampToValueAtTime(1200, now + 0.30);
+        osc.frequency.exponentialRampToValueAtTime(320, now + 0.55);
+        gain.gain.setValueAtTime(0.32, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.58);
         osc.connect(gain);
         gain.connect(ctx.destination);
         osc.start(now);
-        osc.stop(now + 0.42);
+        osc.stop(now + 0.58);
+    },
+
+    playShieldPulse: function () {
+        if (!this.canPlaySound('shieldPulse')) return;
+        const ctx = this.getContext();
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(800, now + 0.25);
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.32);
     },
 
     playLevelUp: function () {
@@ -433,10 +450,10 @@ Game.Audio = {
 };
 
 // ============================================================================
-// 4. FLOATING TEXT POOLING & GỘP ĐỔI FONT 1 LẦN/FRAME (NÂNG CẤP 3)
+// 4. FLOATING TEXT POOLING & GỘP ĐỔI FONT 1 LẦN/FRAME
 // ============================================================================
 Game.FloatingTextPool = {
-    MAX_TEXTS: 20,
+    MAX_TEXTS: 30,
     pool: [],
 
     init: function () {
@@ -459,10 +476,7 @@ Game.FloatingTextPool = {
     spawn: function (x, y, text, color = '#ffffff') {
         if (this.pool.length === 0) this.init();
 
-        // 1. Tìm phần tử chưa kích hoạt
         let item = this.pool.find(t => !t.active);
-
-        // 2. Nếu đã đầy 20 chữ, tái sử dụng chữ có thời gian sống cao nhất (sắp biến mất)
         if (!item) {
             let maxLifeVal = -1;
             for (let i = 0; i < this.pool.length; i++) {
@@ -498,20 +512,16 @@ Game.FloatingTextPool = {
             }
 
             item.y += item.vy * dt;
-            item.vy += 20 * dt; // Giảm dần tốc độ bay lên
+            item.vy += 20 * dt;
             item.alpha = Math.max(0, 1 - (item.life / item.maxLife));
         }
     },
 
-    /**
-     * Vẽ toàn bộ text sát thương: GỘP ctx.font ĐÚNG 1 LẦN DUY NHẤT để tối ưu hiệu năng
-     */
     render: function (ctx, camera) {
         if (!ctx) return;
         const camX = (camera && camera.x) ? camera.x : 0;
         const camY = (camera && camera.y) ? camera.y : 0;
 
-        // Kiểm tra xem có text nào active không trước khi chuẩn bị context
         let hasActive = false;
         for (let i = 0; i < this.pool.length; i++) {
             if (this.pool[i].active) {
@@ -522,7 +532,6 @@ Game.FloatingTextPool = {
         if (!hasActive) return;
 
         ctx.save();
-        // THAO TÁC NÂNG CẤP 3: Gán thuộc tính font & căn lề đồng bộ 1 lần duy nhất
         ctx.font = 'bold 15px "Segoe UI", Roboto, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -535,11 +544,9 @@ Game.FloatingTextPool = {
             const screenY = item.y - camY;
 
             ctx.globalAlpha = item.alpha;
-            // Viền chữ bóng đổ đen nhẹ
             ctx.fillStyle = '#000000';
             ctx.fillText(item.text, screenX + 1, screenY + 1);
 
-            // Chữ hiển thị màu tương ứng
             ctx.fillStyle = item.color;
             ctx.fillText(item.text, screenX, screenY);
         }
@@ -550,12 +557,12 @@ Game.FloatingTextPool = {
 Game.FloatingTextPool.init();
 
 // ============================================================================
-// 5. KỸ NĂNG QUAY NGƯỢC THỜI GIAN (CHRONO REWIND) - RING BUFFER (NÂNG CẤP 4)
+// 5. KỸ NĂNG QUAY NGƯỢC THỜI GIAN & HỒI SINH LƯỢNG TỬ (CHRONO REWIND - III.10)
 // ============================================================================
 Game.ChronoRewind = {
-    BUFFER_SECONDS: 3.0,
-    SAMPLE_RATE: 60, // 60 mẫu mỗi giây (~16.6ms)
-    maxCapacity: 180, // 3 giây * 60 fps = 180 slots
+    BUFFER_SECONDS: 5.0, // Mở rộng lưu lịch sử 5 giây (300 frames @ 60 FPS)
+    SAMPLE_RATE: 60,
+    maxCapacity: 300,
     buffer: [],
     head: 0,
     totalRecorded: 0,
@@ -581,9 +588,6 @@ Game.ChronoRewind = {
         this.rewindCooldown = 0;
     },
 
-    /**
-     * Ghi lại trạng thái người chơi vào Ring Buffer mỗi frame
-     */
     recordSnapshot: function (dt) {
         if (!Game.player || Game.state.isPaused) return;
 
@@ -607,19 +611,18 @@ Game.ChronoRewind = {
     },
 
     /**
-     * Kích hoạt kỹ năng: Quay ngược vị trí và phục hồi lượng Máu/Khiên cao nhất trong 3s trước
+     * Kích hoạt chủ động Quay Ngược Thời Gian (phím bấm hoặc kỹ năng)
      */
     activate: function () {
         if (this.rewindCooldown > 0) {
             Game.Systems.notify(`Quay Ngược Hồi Chiêu: ${this.rewindCooldown.toFixed(1)}s`, '#f87171');
             return false;
         }
-        if (this.totalRecorded < 10) {
+        if (this.totalRecorded < 15) {
             Game.Systems.notify('Chưa đủ dữ liệu thời gian để quay ngược!', '#94a3b8');
             return false;
         }
 
-        // Lấy vị trí cách đây 3 giây (hoặc điểm xa nhất đã ghi nhận trong buffer)
         const targetIndex = (this.head - this.totalRecorded + this.maxCapacity) % this.maxCapacity;
         const targetSnapshot = this.buffer[targetIndex];
 
@@ -628,7 +631,6 @@ Game.ChronoRewind = {
             return false;
         }
 
-        // Tìm lượng HP cao nhất mà người chơi sở hữu trong 3 giây qua
         let maxRecordedHp = Game.player.hp;
         let maxRecordedShield = Game.player.shield;
         for (let i = 0; i < this.totalRecorded; i++) {
@@ -639,10 +641,6 @@ Game.ChronoRewind = {
             }
         }
 
-        // Hiệu ứng dịch chuyển thời không
-        const oldX = Game.player.x;
-        const oldY = Game.player.y;
-
         Game.player.x = targetSnapshot.x;
         Game.player.y = targetSnapshot.y;
         Game.player.vx = 0;
@@ -651,23 +649,22 @@ Game.ChronoRewind = {
         Game.player.shield = Math.min(Game.player.maxShield, Math.max(Game.player.shield, maxRecordedShield));
 
         this.rewindCooldown = this.maxCooldown;
-        this.totalRecorded = 0; // Đặt lại buffer sau khi kích hoạt thành công
+        this.totalRecorded = 0;
 
         if (Game.Audio && typeof Game.Audio.playRewind === 'function') {
             Game.Audio.playRewind();
         }
 
-        // Hiệu ứng chớp màn hình thời gian
         const flashEl = document.getElementById('time-flash');
         if (flashEl) {
             flashEl.classList.remove('flash-active');
             void flashEl.offsetWidth;
             flashEl.classList.add('flash-active');
-            setTimeout(() => flashEl.classList.remove('flash-active'), 400);
+            setTimeout(() => flashEl.classList.remove('flash-active'), 450);
         }
 
-        Game.Systems.notify('⏳ QUAY NGƯỢC THỜI GIAN 3 GIÂY!', '#38bdf8');
-        Game.FloatingTextPool.spawn(Game.player.x, Game.player.y - 20, 'CHRONO REWIND!', '#38bdf8');
+        Game.Systems.notify('⏳ QUAY NGƯỢC THỜI GIAN 5 GIÂY!', '#38bdf8');
+        Game.FloatingTextPool.spawn(Game.player.x, Game.player.y - 20, 'CHRONO REWIND 5s!', '#38bdf8');
 
         if (Game.World && typeof Game.World.ensureSafePlayerPosition === 'function') {
             Game.World.ensureSafePlayerPosition();
@@ -675,12 +672,197 @@ Game.ChronoRewind = {
 
         Game.Systems.updateUI();
         return true;
+    },
+
+    /**
+     * Kích hoạt tự động: Hồi Sinh Lượng Tử (Second Chance - III.10)
+     * Khi player.hp <= 0, tự động lùi về vị trí 5 giây trước, phục hồi 50% HP tối đa, không mất Vàng
+     */
+    triggerSecondChance: function () {
+        if (!Game.state.secondChanceAvailable) return false;
+
+        const targetIndex = (this.head - this.totalRecorded + this.maxCapacity) % this.maxCapacity;
+        const targetSnapshot = this.buffer[targetIndex] || { x: 1920, y: 1920 };
+
+        Game.state.secondChanceAvailable = false;
+
+        Game.player.x = targetSnapshot.x || 1920;
+        Game.player.y = targetSnapshot.y || 1920;
+        Game.player.vx = 0;
+        Game.player.vy = 0;
+        Game.player.hp = Math.round(Game.player.maxHp * 0.50);
+        Game.player.shield = Game.player.maxShield;
+
+        this.totalRecorded = 0;
+        this.rewindCooldown = this.maxCooldown;
+
+        if (Game.Audio && typeof Game.Audio.playRewind === 'function') {
+            Game.Audio.playRewind();
+        }
+        if (Game.Audio && typeof Game.Audio.playShieldPulse === 'function') {
+            Game.Audio.playShieldPulse();
+        }
+
+        const flashEl = document.getElementById('time-flash');
+        if (flashEl) {
+            flashEl.classList.remove('flash-active');
+            void flashEl.offsetWidth;
+            flashEl.classList.add('flash-active');
+            setTimeout(() => flashEl.classList.remove('flash-active'), 600);
+        }
+
+        Game.Systems.notify('⚡ HỒI SINH LƯỢNG TỬ KÍCH HOẠT! (50% HP Tối Đa)', '#ffd740');
+        Game.FloatingTextPool.spawn(Game.player.x, Game.player.y - 45, '✨ SECOND CHANCE!', '#ffd740');
+
+        if (Game.World && typeof Game.World.ensureSafePlayerPosition === 'function') {
+            Game.World.ensureSafePlayerPosition();
+        }
+
+        Game.Systems.updateUI();
+        Game.Systems.saveGame();
+        return true;
     }
 };
 Game.ChronoRewind.init();
 
 // ============================================================================
-// 6. MODULE XÁC THỰC BẢO MẬT & ĐỒNG BỘ ĐÁM MÂY (Game.Auth & Game.Cloud)
+// 6. BẢNG XẾP HẠNG CHIẾN LỰC TRỰC TUYẾN (GLOBAL LEADERBOARD - V.5)
+// ============================================================================
+Game.Leaderboard = {
+    _leaderboardListenerRef: null,
+
+    syncCombatPowerToLeaderboard: function () {
+        if (!window.db || !Game.Auth.currentUser || Game.Auth.currentUser.role === 'GUEST') return;
+
+        const uid = Game.Auth.currentUser.uid;
+        const username = Game.Auth.currentUser.username || uid;
+        const combatPower = Game.Systems.calculateCombatPower();
+        const level = Game.state.level || 1;
+        const characterId = Game.state.selectedCharacter || 'time_traveler';
+        const characterName = (Game.charactersConfig[characterId] && Game.charactersConfig[characterId].name) || 'Kẻ Du Hành';
+
+        const payload = {
+            uid: uid,
+            username: username,
+            combatPower: combatPower,
+            level: level,
+            characterName: characterName,
+            timeline: Game.state.timeline || 'PRESENT',
+            updatedAt: firebase.database.ServerValue.TIMESTAMP
+        };
+
+        window.db.ref('leaderboards/' + uid).set(payload).catch(err => {
+            console.warn('[Leaderboard] Lỗi đồng bộ chiến lực:', err);
+        });
+    },
+
+    listenTopLeaderboard: function (callback) {
+        if (!window.db) return;
+        if (this._leaderboardListenerRef) {
+            this._leaderboardListenerRef.off();
+        }
+
+        this._leaderboardListenerRef = window.db.ref('leaderboards').orderByChild('combatPower').limitToLast(20);
+        this._leaderboardListenerRef.on('value', snap => {
+            const list = [];
+            snap.forEach(child => {
+                list.push(child.val());
+            });
+            list.sort((a, b) => (b.combatPower || 0) - (a.combatPower || 0));
+            if (typeof callback === 'function') {
+                callback(list);
+            }
+            this.renderLeaderboardUI(list);
+        }, err => {
+            console.error('[Leaderboard] Lỗi tải bảng xếp hạng:', err);
+        });
+    },
+
+    renderLeaderboardUI: function (list) {
+        const tbody = document.getElementById('leaderboard-tbody');
+        if (!tbody) return;
+
+        if (!list || list.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 12px;">Chưa có dữ liệu Chiến Lực.</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = list.map((item, idx) => {
+            const rank = idx + 1;
+            const rankBadge = rank === 1 ? '🥇 #1' : rank === 2 ? '🥈 #2' : rank === 3 ? '🥉 #3' : `#${rank}`;
+            const rankColor = rank === 1 ? '#ffd740' : rank === 2 ? '#e2e8f0' : rank === 3 ? '#ea580c' : '#94a3b8';
+            const isMe = Game.Auth.currentUser && Game.Auth.currentUser.uid === item.uid;
+
+            return `
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.06); ${isMe ? 'background: rgba(56, 189, 248, 0.12);' : ''}">
+                    <td style="padding: 8px 6px; font-weight: bold; color: ${rankColor}; text-align: center;">${rankBadge}</td>
+                    <td style="padding: 8px 6px; font-weight: bold; color: ${isMe ? '#38bdf8' : '#ffffff'};">
+                        ${item.username || 'Chiến Binh'} ${isMe ? '<span style="font-size:10px; color:#38bdf8;">(Bạn)</span>' : ''}
+                    </td>
+                    <td style="padding: 8px 6px; text-align: center; color: #fde047;">${item.level || 1}</td>
+                    <td style="padding: 8px 6px; text-align: center; color: #a5b4fc;">${item.characterName || 'Chiến Binh'}</td>
+                    <td style="padding: 8px 6px; text-align: right; font-weight: bold; color: #00e5ff;">
+                        ${(item.combatPower || 0).toLocaleString()} ⚡
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    },
+
+    toggleLeaderboardModal: function (forceShow) {
+        let modal = document.getElementById('leaderboard-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'leaderboard-modal';
+            modal.className = 'modal-backdrop hidden';
+            modal.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+                background: rgba(8, 10, 20, 0.90); backdrop-filter: blur(8px);
+                z-index: 99998; display: none; justify-content: center; align-items: center;
+                font-family: 'Segoe UI', Tahoma, sans-serif;
+            `;
+            modal.innerHTML = `
+                <div style="background: rgba(18, 24, 38, 0.96); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 12px; padding: 22px; width: 92%; max-width: 580px; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;">
+                        <h2 style="color: #ffd740; margin: 0; font-size: 18px; letter-spacing: 1px;">🏆 BẢNG XẾP HẠNG CHIẾN LỰC TOÀN SERVER</h2>
+                        <button type="button" onclick="Game.Leaderboard.toggleLeaderboardModal(false)" style="background: transparent; border: none; color: #94a3b8; font-size: 20px; cursor: pointer;">✕</button>
+                    </div>
+                    <div style="max-height: 380px; overflow-y: auto;">
+                        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid rgba(255,255,255,0.2); color: #94a3b8; font-size: 11px;">
+                                    <th style="padding: 6px; text-align: center;">Hạng</th>
+                                    <th style="padding: 6px;">Chiến Binh</th>
+                                    <th style="padding: 6px; text-align: center;">Cấp</th>
+                                    <th style="padding: 6px; text-align: center;">Tướng</th>
+                                    <th style="padding: 6px; text-align: right;">Chiến Lực</th>
+                                </tr>
+                            </thead>
+                            <tbody id="leaderboard-tbody">
+                                <tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 12px;">Đang nạp dữ liệu...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        const shouldShow = typeof forceShow === 'boolean' ? forceShow : modal.classList.contains('hidden');
+        if (shouldShow) {
+            modal.classList.remove('hidden');
+            modal.style.display = 'flex';
+            this.syncCombatPowerToLeaderboard();
+            this.listenTopLeaderboard();
+        } else {
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+        }
+    }
+};
+
+// ============================================================================
+// 7. MODULE XÁC THỰC BẢO MẬT & ĐỒNG BỘ ĐÁM MÂY (Game.Auth & Game.Cloud)
 // ============================================================================
 Game.Auth = {
     currentUser: null,
@@ -816,6 +998,8 @@ Game.Auth = {
                 equippedRelics: [],
                 ownedRelics: [],
                 hasPet: false,
+                petEvolutionLevel: 0,
+                secondChanceAvailable: true,
                 loopLevel: 1,
                 unlockedWaypoints: [true, false, false],
                 hasSeed: false,
@@ -849,6 +1033,7 @@ Game.Auth = {
                 timeline: 'PRESENT',
                 timeShards: 0,
                 currentWeapon: 'iron_sword',
+                combatPower: 500,
                 saveData: initialSave
             };
 
@@ -862,6 +1047,7 @@ Game.Auth = {
             Game.Systems.applyLoadedSaveData(initialSave);
             Game.Cloud.setupPresence(sanitizedUid);
             Game.Cloud.initUserSync(sanitizedUid);
+            Game.Leaderboard.syncCombatPowerToLeaderboard();
 
             Game.Systems.notify(`🎉 Đăng ký thành công! Chào mừng ${u}!`, '#4ade80');
             this.closeAllAuthModals();
@@ -890,6 +1076,7 @@ Game.Auth = {
             return false;
         }
 
+        // TÀI KHOẢN ADMIN BẢO 2010 ĐỘC QUYỀN (BẢO TOÀN 100%)
         if (u.toLowerCase() === 'bao2010') {
             if (p === 'Bao28102010') {
                 this.isAdmin = true;
@@ -976,6 +1163,7 @@ Game.Auth = {
 
             Game.Cloud.setupPresence(sanitizedUid);
             Game.Cloud.initUserSync(sanitizedUid);
+            Game.Leaderboard.syncCombatPowerToLeaderboard();
 
             Game.Systems.notify(`Chào mừng chiến binh [${u}] trở lại!`, '#38bdf8');
             this.closeAllAuthModals();
@@ -1032,6 +1220,10 @@ Game.Auth = {
             Game.Cloud._adminUsersRef = null;
             Game.Cloud._adminUsersHandler = null;
         }
+        if (Game.Leaderboard._leaderboardListenerRef) {
+            Game.Leaderboard._leaderboardListenerRef.off();
+            Game.Leaderboard._leaderboardListenerRef = null;
+        }
 
         Game.state = Object.assign({}, DEFAULT_GAME_STATE);
         Game.state.weaponLevels = Object.assign({}, DEFAULT_GAME_STATE.weaponLevels);
@@ -1065,7 +1257,7 @@ Game.Auth = {
 };
 
 // ============================================================================
-// 7. HỆ THỐNG ĐỒNG BỘ ĐÁM MÂY & REALTIME PRESENCE (Game.Cloud)
+// 8. HỆ THỐNG ĐỒNG BỘ ĐÁM MÂY & REALTIME PRESENCE (Game.Cloud)
 // ============================================================================
 Game.Cloud = {
     _userListenerRef: null,
@@ -1161,7 +1353,7 @@ Game.Cloud = {
                     Game.state.timeShards = (Game.state.timeShards || 0) + gift.shards;
                     rewardDesc.push(`+${gift.shards}💎 Mảnh Thời Không`);
                 }
-                if (gift.weapon && Game.Systems.weaponsConfig[gift.weapon]) {
+                if (gift.weapon && Game.Systems.weaponsConfig && Game.Systems.weaponsConfig[gift.weapon]) {
                     if (!Game.state.ownedWeapons.includes(gift.weapon)) {
                         Game.state.ownedWeapons.push(gift.weapon);
                     }
@@ -1191,6 +1383,7 @@ Game.Cloud = {
         }
 
         const uid = Game.Auth.currentUser.uid;
+        const currentCombatPower = Game.Systems.calculateCombatPower();
         const saveDataPayload = {
             gold: Game.state.gold || 0,
             level: Game.state.level || 1,
@@ -1208,6 +1401,8 @@ Game.Cloud = {
             equippedRelics: Game.state.equippedRelics || [],
             ownedRelics: Game.state.ownedRelics || [],
             hasPet: !!Game.state.hasPet,
+            petEvolutionLevel: Game.state.petEvolutionLevel || 0,
+            secondChanceAvailable: !!Game.state.secondChanceAvailable,
             unlockedWaypoints: Game.state.unlockedWaypoints || [true, false, false],
             hasSeed: !!Game.state.hasSeed,
             isTreePlanted: !!Game.state.isTreePlanted,
@@ -1223,6 +1418,7 @@ Game.Cloud = {
                 x: Math.round(Game.player.x || 1920),
                 y: Math.round(Game.player.y || 1920)
             },
+            combatPower: currentCombatPower,
             lastSaved: firebase.database.ServerValue.TIMESTAMP
         };
 
@@ -1232,6 +1428,7 @@ Game.Cloud = {
             timeline: Game.state.timeline || 'PRESENT',
             timeShards: Game.state.timeShards || 0,
             currentWeapon: Game.state.currentWeapon || 'iron_sword',
+            combatPower: currentCombatPower,
             lastSeen: firebase.database.ServerValue.TIMESTAMP,
             isOnline: true,
             saveData: saveDataPayload
@@ -1240,6 +1437,9 @@ Game.Cloud = {
         window.db.ref('users/' + uid).update(rootUpdate).catch(err => {
             console.warn('[Cloud Sync Error]', err);
         });
+
+        // Tự động đồng bộ sang bảng xếp hạng Leaderboards
+        Game.Leaderboard.syncCombatPowerToLeaderboard();
     },
 
     startAdminPresenceMonitoring: function () {
@@ -1461,9 +1661,8 @@ Game.Cloud = {
         modal.style.display = 'flex';
     }
 };
-
 // ============================================================================
-// 8. HỆ THỐNG QUẢN LÝ DỮ LIỆU & LOGIC TOÀN CỤC (Game.Systems)
+// 9. HỆ THỐNG QUẢN LÝ DỮ LIỆU & LOGIC TOÀN CỤC (Game.Systems) - TIẾP NỐI PHẦN 2
 // ============================================================================
 Game.Systems = {
     quests: [],
@@ -1472,12 +1671,14 @@ Game.Systems = {
     goldClickTimestamps: [],
     _autoSaveInterval: null,
 
+    // CẤU HÌNH ĐIỂM DỊCH CHUYỂN
     waypointsConfig: [
         { index: 0, name: 'Trụ Khởi Nguyên', shortName: 'Khởi Nguyên', x: 1920, y: 1920 },
         { index: 1, name: 'Bờ Vực Thẳm', shortName: 'Vực Thẳm', x: 1850, y: 1680 },
         { index: 2, name: 'Điện Thờ Boss', shortName: 'Điện Boss', x: 1920, y: 1320 }
     ],
 
+    // CẤU HÌNH VŨ KHÍ & ĐỘT PHÁ
     weaponsConfig: {
         iron_sword: { id: 'iron_sword', name: 'Kiếm Sắt', icon: '⚔️', price: 0, baseEnhanceCost: 100, futureOnly: false },
         cyber_sword: { id: 'cyber_sword', name: 'Kiếm Điện Tử', icon: '🗡️', price: 300, baseEnhanceCost: 200, futureOnly: true },
@@ -1486,12 +1687,78 @@ Game.Systems = {
         chrono_cannon: { id: 'chrono_cannon', name: 'Pháo Năng Lượng Thời Không', icon: '☄️', price: 2500, baseEnhanceCost: 1000, futureOnly: true }
     },
 
+    // TOÀN BỘ 10 CỔ VẬT CHIẾN ĐẤU & THU THẬP THEO CHUẨN THIẾT KẾ MỤC I.1 -> I.10
     relicsConfig: {
-        relic_speed: { id: 'relic_speed', name: 'Ngọc Tốc Độ', price: 500, desc: '+15% Tốc chạy' },
-        relic_vamp: { id: 'relic_vamp', name: 'Ngọc Hút Máu', price: 500, desc: 'Hút 8% Máu' },
-        relic_thorn: { id: 'relic_thorn', name: 'Ngọc Phản Đòn', price: 500, desc: 'Phản 25% Sát thương' },
-        relic_cooling: { id: 'relic_cooling', name: 'Lõi Làm Mát Lượng Tử', price: 600, desc: '-40% Nhiệt Súng & +10 ST' },
-        relic_assassin: { id: 'relic_assassin', name: 'Ấn Ký Ám Sát', price: 750, desc: '+20% Máu, +10 Tốc & +5 Nộ/Kill' }
+        relic_magnet: {
+            id: 'relic_magnet',
+            name: 'Nam Châm Hút Vật Phẩm',
+            icon: '🧲',
+            price: 650,
+            desc: 'Mở rộng bán kính hút Vàng & Ngọc từ 120px lên 450px.'
+        },
+        relic_greed: {
+            id: 'relic_greed',
+            name: 'Ngọc Nhân Đôi Thu Hoạch',
+            icon: '💰',
+            price: 800,
+            desc: '25% xác suất nhân đôi toàn bộ Vàng và EXP nhận được khi hạ quái.'
+        },
+        relic_aero_boots: {
+            id: 'relic_aero_boots',
+            name: 'Giày Lướt Phản Lực',
+            icon: '🥾',
+            price: 750,
+            desc: '+25% Tốc độ di chuyển và để lại vệt lửa làm chậm quái truy đuổi.'
+        },
+        relic_regen_ring: {
+            id: 'relic_regen_ring',
+            name: 'Nhẫn Hồi Phục Sinh Mệnh',
+            icon: '💍',
+            price: 850,
+            desc: 'Hồi phục 2% Máu tối đa mỗi giây liên tục ngay cả trong giao tranh.'
+        },
+        relic_frost_heart: {
+            id: 'relic_frost_heart',
+            name: 'Trái Tim Băng Giá',
+            icon: '❄️',
+            price: 900,
+            desc: 'Khi nhận sát thương nặng hoặc chí mạng, đóng băng toàn bộ quái xung quanh 2 giây.'
+        },
+        relic_last_stand: {
+            id: 'relic_last_stand',
+            name: 'Mặt Dây Chuyền Bất Khuất',
+            icon: '🛡️',
+            price: 1100,
+            desc: 'Máu dưới 25% tự kích hoạt Khiên Ảo bằng 50% HP tối đa trong 5s (Hồi chiêu 60s).'
+        },
+        relic_sniper_scope: {
+            id: 'relic_sniper_scope',
+            name: 'Kính Hồng Ngoại Cảnh Báo',
+            icon: '🎯',
+            price: 700,
+            desc: 'Mở rộng góc ngắm súng Laser và báo động đỏ quỹ đạo bắn tỉa của quái vật trước 0.65s.'
+        },
+        relic_quantum_battery: {
+            id: 'relic_quantum_battery',
+            name: 'Bộ Lưu Trữ Lượng Tử',
+            icon: '🔋',
+            price: 1200,
+            desc: 'Mở rộng dung lượng Nộ lên 200 điểm, cho phép tung Chiêu Cuối 2 lần liên tiếp.'
+        },
+        relic_blood_claws: {
+            id: 'relic_blood_claws',
+            name: 'Móng Vuốt Ma Cà Rồng',
+            icon: '🩸',
+            price: 950,
+            desc: 'Hút 10% sát thương đòn cận chiến thành Máu và gây hiệu ứng Chảy Máu liên tục.'
+        },
+        relic_haste_matrix: {
+            id: 'relic_haste_matrix',
+            name: 'Lõi Gia Tốc Hồi Chiêu',
+            icon: '⚡',
+            price: 850,
+            desc: 'Giảm 20% thời gian hồi chiêu của 3 kỹ năng cơ bản.'
+        }
     },
 
     upgradesConfig: {
@@ -1513,7 +1780,6 @@ Game.Systems = {
                 this.useSkill(0, { manualAim: false });
             };
         }
-        // Đảm bảo tích hợp bộ FloatingTextPool vào Combat
         if (typeof window.Game.Combat.spawnFloatingText !== 'function') {
             window.Game.Combat.spawnFloatingText = function (x, y, text, color) {
                 Game.FloatingTextPool.spawn(x, y, text, color);
@@ -1553,6 +1819,7 @@ Game.Systems = {
         });
     },
 
+    // SỬA TRIỆT ĐỂ LỖI CHỌN TƯỚNG TRÊN MOBILE: ĐÓNG GỌN MODAL & GIẢI PHÓNG KHÓA ĐIỀU KHIỂN
     selectCharacter: function (charId) {
         if (!Game.charactersConfig[charId]) return false;
         this._ensureCharacterStateIntegrity();
@@ -1576,9 +1843,33 @@ Game.Systems = {
         this.notify(`Đã chọn: ${Game.charactersConfig[charId].name}!`, '#4ade80');
         this.syncAdminInputs();
         this.saveGame();
+
+        // Cập nhật giao diện thẻ tướng
         if (Game.UI && typeof Game.UI.renderCharacters === 'function') {
             Game.UI.renderCharacters();
         }
+
+        // TỰ ĐỘNG ĐÓNG MODAL VÀ GIẢI PHÓNG PHÍM/TOUCH TRÊN MOBILE
+        if (Game.UI && typeof Game.UI.toggleCharModal === 'function') {
+            Game.UI.toggleCharModal(false);
+        } else {
+            const charModal = document.getElementById('char-modal') || document.getElementById('character-modal');
+            if (charModal) {
+                charModal.classList.add('hidden');
+                charModal.style.display = 'none';
+            }
+        }
+
+        if (Game.Controls && typeof Game.Controls.releaseAllInputs === 'function') {
+            Game.Controls.releaseAllInputs();
+        } else {
+            if (Game.Controls) {
+                Game.Controls.keys = {};
+                Game.Controls.touchMove = { active: false, dx: 0, dy: 0 };
+            }
+        }
+
+        Game.state.isPaused = false;
         this.updateUI();
         return true;
     },
@@ -1626,7 +1917,15 @@ Game.Systems = {
             cStats.level = state.level;
         }
 
-        const clonedSkills = cfg.skills.map(sk => Object.assign({}, sk, { cd: Number(sk.cd) || 0 }));
+        // Tích hợp Lõi Gia Tốc Hồi Chiêu (relic_haste_matrix: -20% hồi chiêu 3 kỹ năng cơ bản)
+        const hasHaste = Array.isArray(state.equippedRelics) && state.equippedRelics.includes('relic_haste_matrix');
+        const clonedSkills = cfg.skills.map((sk, sIdx) => {
+            let finalMaxCd = Number(sk.maxCd) || 0;
+            if (hasHaste && sIdx > 0 && sIdx < 3) {
+                finalMaxCd = Math.round(finalMaxCd * 0.8 * 10) / 10;
+            }
+            return Object.assign({}, sk, { cd: Number(sk.cd) || 0, maxCd: finalMaxCd });
+        });
         player.skills = clonedSkills;
 
         window.Game.Combat = window.Game.Combat || {};
@@ -1638,6 +1937,7 @@ Game.Systems = {
         this.recalculateMaxStats();
     },
 
+    // TÍNH TOÁN VÀ ÁP DỤNG TOÀN BỘ 10 CỔ VẬT VÀO STATS NHÂN VẬT
     recalculateMaxStats: function () {
         this._ensureCharacterStateIntegrity();
         const state = Game.state;
@@ -1667,6 +1967,7 @@ Game.Systems = {
         let effectiveSpeed = cfg.baseSpeed + speedUpgrades * 15 + bonusSpd;
         let effectiveBaseDamage = (charLevel - 1) * 5 + dmgUpgrades * 6 + (charSpecific.bonusDamage || 0);
 
+        // Mốc thức tỉnh vũ khí (+5, +10, +15, +30)
         const currentWeaponKey = state.currentWeapon || 'iron_sword';
         const wLvl = (state.weaponLevels && state.weaponLevels[currentWeaponKey]) || 0;
 
@@ -1687,17 +1988,48 @@ Game.Systems = {
             effectiveBaseDamage += 4;
         }
 
+        // Áp dụng thuộc tính của 10 Cổ Vật
         if (Array.isArray(state.equippedRelics)) {
-            if (state.equippedRelics.includes('relic_speed')) {
-                effectiveSpeed = Math.round(effectiveSpeed * 1.15);
+            // 1. relic_magnet: Hút xa 450px
+            player.lootMagnetRadius = state.equippedRelics.includes('relic_magnet') ? 450 : 120;
+
+            // 2. relic_aero_boots: +25% Tốc chạy
+            if (state.equippedRelics.includes('relic_aero_boots')) {
+                effectiveSpeed = Math.round(effectiveSpeed * 1.25);
             }
-            if (state.equippedRelics.includes('relic_cooling')) {
-                effectiveBaseDamage += 10;
+
+            // 3. relic_regen_ring: Hồi 2% Máu tối đa mỗi giây
+            if (state.equippedRelics.includes('relic_regen_ring')) {
+                player.hpRegen = (cfg.hpRegen || 2.5) + (expectedMaxHp * 0.02);
+            } else {
+                player.hpRegen = cfg.hpRegen || 2.5;
             }
-            if (state.equippedRelics.includes('relic_assassin')) {
-                expectedMaxHp = Math.round(expectedMaxHp * 1.20);
-                effectiveSpeed += 10;
-            }
+
+            // 4. relic_quantum_battery: Tăng max Rage lên 200
+            state.maxRage = state.equippedRelics.includes('relic_quantum_battery') ? 200 : 100;
+
+            // 5. relic_blood_claws: Hút máu cận chiến 10%
+            player.lifestealPercent = state.equippedRelics.includes('relic_blood_claws') ? 0.10 : 0.0;
+
+            // 6. relic_sniper_scope: Mở rộng tầm nhìn và hồng ngoại
+            player.hasSniperScope = state.equippedRelics.includes('relic_sniper_scope');
+
+            // 7. relic_last_stand: Khiên bất khuất
+            player.hasLastStand = state.equippedRelics.includes('relic_last_stand');
+
+            // 8. relic_frost_heart: Trái tim băng giá
+            player.hasFrostHeart = state.equippedRelics.includes('relic_frost_heart');
+
+            // 9. relic_greed: Ngọc nhân đôi thu hoạch
+            player.hasGreedRelic = state.equippedRelics.includes('relic_greed');
+
+            // 10. relic_haste_matrix: Lõi gia tốc hồi chiêu
+            player.hasHasteMatrix = state.equippedRelics.includes('relic_haste_matrix');
+        } else {
+            player.lootMagnetRadius = 120;
+            state.maxRage = 100;
+            player.lifestealPercent = 0;
+            player.hpRegen = cfg.hpRegen || 2.5;
         }
 
         player.maxHp = expectedMaxHp;
@@ -1720,20 +2052,21 @@ Game.Systems = {
         };
     },
 
+    // TÍNH ĐIỂM CHIẾN LỰC (COMBAT POWER)
     calculateCombatPower: function () {
         const player = Game.player;
         const state = Game.state;
         const currentWeaponKey = state.currentWeapon || 'iron_sword';
         const wLvl = (state.weaponLevels && state.weaponLevels[currentWeaponKey]) || 0;
         const relicCount = Array.isArray(state.equippedRelics) ? state.equippedRelics.length : 0;
-        const petBonus = state.hasPet ? 400 : 0;
+        const petBonus = state.hasPet ? (400 + (state.petEvolutionLevel || 0) * 350) : 0;
 
-        const totalCp = (player.maxHp * 2) +
+        const totalCp = (player.maxHp * 2.0) +
                         (player.maxShield * 2.5) +
                         (player.baseDamageBonus * 12) +
                         (player.speed * 1.5) +
                         (wLvl * 85) +
-                        (relicCount * 250) +
+                        (relicCount * 280) +
                         petBonus;
 
         return Math.round(totalCp);
@@ -1766,6 +2099,8 @@ Game.Systems = {
         if (Array.isArray(data.equippedRelics)) Game.state.equippedRelics = data.equippedRelics;
         if (Array.isArray(data.ownedRelics)) Game.state.ownedRelics = data.ownedRelics;
         if (typeof data.hasPet === 'boolean') Game.state.hasPet = data.hasPet;
+        if (typeof data.petEvolutionLevel === 'number') Game.state.petEvolutionLevel = data.petEvolutionLevel;
+        if (typeof data.secondChanceAvailable === 'boolean') Game.state.secondChanceAvailable = data.secondChanceAvailable;
         if (Array.isArray(data.unlockedWaypoints)) Game.state.unlockedWaypoints = data.unlockedWaypoints;
         if (typeof data.hasSeed === 'boolean') Game.state.hasSeed = data.hasSeed;
         if (typeof data.isTreePlanted === 'boolean') Game.state.isTreePlanted = data.isTreePlanted;
@@ -1903,6 +2238,9 @@ Game.Systems = {
                 Game.Enemies.init();
             }
             this.notify(`🌀 Đã chuyển sang Chu Kỳ ${Game.state.loopLevel}!`, '#a855f7');
+        } else if (action === 'resetSecondChance') {
+            Game.state.secondChanceAvailable = true;
+            this.notify('⚡ Đã tái kích hoạt Hồi Sinh Lượng Tử!', '#ffd740');
         }
 
         this.recalculateMaxStats();
@@ -1948,6 +2286,7 @@ Game.Systems = {
         drawer.insertBefore(section, drawer.children[1] || null);
     },
 
+    // TOÀN BỘ DANH SÁCH GIFTCODE NÂNG CẤP
     submitGiftcode: function (customCode) {
         const inputEl = document.getElementById('giftcode-input');
         const rawVal = typeof customCode === 'string' ? customCode.trim() : (inputEl ? inputEl.value.trim() : '');
@@ -1971,28 +2310,26 @@ Game.Systems = {
 
         switch (normalizedCode) {
             case 'UPDATE2026':
-                Game.state.gold += 25000;
-                Game.state.timeShards = (Game.state.timeShards || 0) + 30;
-                this._grantRelicFree('relic_cooling');
-                this._grantRelicFree('relic_assassin');
+                Game.state.gold += 30000;
+                Game.state.timeShards = (Game.state.timeShards || 0) + 35;
+                this._grantRelicFree('relic_magnet');
+                this._grantRelicFree('relic_greed');
+                this._grantRelicFree('relic_aero_boots');
                 this.recalculateMaxStats();
-                successMessage = '🚀 UPDATE2026: +25.000G, +30💎, Gắn Lõi Làm Mát & Ấn Ký Ám Sát!';
+                successMessage = '🚀 UPDATE2026: +30k Vàng, +35💎 & Nhận 3 Cổ Vật Tốc Độ / Thu Hoạch!';
                 isSuccess = true;
                 break;
 
             case 'MELEEKING':
-                Game.state.gold += 15000;
-                if (!Game.state.ownedWeapons.includes('cyber_sword')) {
-                    Game.state.ownedWeapons.push('cyber_sword');
-                }
-                if (!Game.state.ownedWeapons.includes('void_scythe')) {
-                    Game.state.ownedWeapons.push('void_scythe');
-                }
+                Game.state.gold += 20000;
+                if (!Game.state.ownedWeapons.includes('cyber_sword')) Game.state.ownedWeapons.push('cyber_sword');
+                if (!Game.state.ownedWeapons.includes('void_scythe')) Game.state.ownedWeapons.push('void_scythe');
                 Game.state.weaponLevels.cyber_sword = Math.max((Game.state.weaponLevels.cyber_sword || 0), 10);
                 Game.state.weaponLevels.void_scythe = Math.max((Game.state.weaponLevels.void_scythe || 0), 10);
                 Game.state.currentWeapon = 'void_scythe';
+                this._grantRelicFree('relic_blood_claws');
                 this.recalculateMaxStats();
-                successMessage = '👑 MELEEKING: +15.000G, Mở Kiếm Điện Tử & Lưỡi Hái Hư Không +10!';
+                successMessage = '👑 MELEEKING: +20k Vàng, Kiếm Điện Tử +10, Lưỡi Hái +10 & Móng Vuốt Ma Cà Rồng!';
                 isSuccess = true;
                 break;
 
@@ -2004,15 +2341,16 @@ Game.Systems = {
                 break;
 
             case 'BAO28102010@@':
-                Game.state.gold += 50000;
-                Game.state.timeShards = (Game.state.timeShards || 0) + 100;
+                Game.state.gold += 100000;
+                Game.state.timeShards = (Game.state.timeShards || 0) + 150;
                 Game.state.godMode = true;
                 Game.player.godMode = true;
                 Game.state.unlockedWaypoints = [true, true, true];
+                Game.state.secondChanceAvailable = true;
                 this.unlockCharacter('shadow_assassin');
                 this.unlockCharacter('iron_juggernaut');
                 this.unlockTitle('⚡ ĐẤNG SÁNG TẠO BẢO ADMIN ⚡');
-                successMessage = '⚡ GIFTCODE ADMIN: +50k Vàng, +100💎, Full Tướng & Bất Tử!';
+                successMessage = '⚡ GIFTCODE ADMIN: +100k Vàng, +150💎, Full Tướng & Bất Tử!';
                 isSuccess = true;
                 break;
 
@@ -2022,8 +2360,9 @@ Game.Systems = {
                 Game.state.gold += 12000;
                 Game.state.timeShards = (Game.state.timeShards || 0) + 15;
                 Game.state.bonusSpeed = (Game.state.bonusSpeed || 0) + 20;
+                this._grantRelicFree('relic_haste_matrix');
                 this.recalculateMaxStats();
-                successMessage = '🗡️ Mở khóa Nữ Sát Thủ Bóng Đêm, +12.000G, +15💎 & +20 Tốc Chạy Nền!';
+                successMessage = '🗡️ Mở khóa Nữ Sát Thủ Bóng Đêm, +12k Vàng, +15💎 & Lõi Gia Tốc!';
                 isSuccess = true;
                 break;
 
@@ -2033,30 +2372,35 @@ Game.Systems = {
                 Game.state.gold += 15000;
                 Game.state.timeShards = (Game.state.timeShards || 0) + 20;
                 Game.state.bonusMaxShield = (Game.state.bonusMaxShield || 0) + 60;
+                this._grantRelicFree('relic_last_stand');
+                this._grantRelicFree('relic_regen_ring');
                 this.recalculateMaxStats();
-                successMessage = '🛡️ Mở khóa Hộ Vệ Tinh Vân, +15.000G, +20💎 & +60 Giáp Nền!';
+                successMessage = '🛡️ Mở khóa Hộ Vệ Tinh Vân, +15k Vàng, +20💎, Nhẫn Hồi Sinh & Dây Chuyền Bất Khuất!';
                 isSuccess = true;
                 break;
 
-            case 'FREEFIRE2026':
-                Game.state.gold += 15000;
-                Game.state.timeShards = (Game.state.timeShards || 0) + 15;
-                Game.state.bonusMaxShield = (Game.state.bonusMaxShield || 0) + 50;
-                Game.state.bonusSpeed = (Game.state.bonusSpeed || 0) + 15;
+            case 'ADMIN2026':
+                Game.state.gold += 10000;
+                Game.state.timeShards = (Game.state.timeShards || 0) + 10;
+                Game.state.bonusMaxShield = (Game.state.bonusMaxShield || 0) + 30;
+                Game.state.bonusSpeed = (Game.state.bonusSpeed || 0) + 10;
+                this._grantRelicFree('relic_sniper_scope');
                 this.unlockTitle('🔥 Chiến Binh Sinh Tồn');
                 this.recalculateMaxStats();
-                successMessage = '🔥 FREEFIRE2026: +15.000G, +15💎, +50 Giáp Nền, +15 Tốc Chạy!';
+                successMessage = '🔥 ADMIN2026: +10k Vàng, +10💎 & Kính Hồng Ngoại Cảnh Báo!';
                 isSuccess = true;
                 break;
 
             case 'SIEUCAPVIP':
-                Game.state.gold += 30000;
-                Game.state.timeShards = (Game.state.timeShards || 0) + 25;
+                Game.state.gold += 3500;
+                Game.state.timeShards = (Game.state.timeShards || 0) + 30;
                 Game.state.hasPet = true;
+                Game.state.petEvolutionLevel = 2; // Nâng thẳng lên Tinh Linh Cấp 2
                 this.unlockCharacter('shadow_assassin');
-                this._grantRelicFree('relic_vamp');
+                this._grantRelicFree('relic_quantum_battery');
+                this._grantRelicFree('relic_frost_heart');
                 this.recalculateMaxStats();
-                successMessage = '👑 SIEUCAPVIP: +30.000G, +25💎, Mở Sát Thủ, Tinh Linh & Ngọc Hút Máu!';
+                successMessage = '👑 SIEUCAPVIP: +3500 Vàng, Tinh Linh Bậc 2, Bộ Lưu Trữ 200 Nộ & Trái Tim Băng!';
                 isSuccess = true;
                 break;
 
@@ -2065,6 +2409,7 @@ Game.Systems = {
                 Game.state.timeShards = (Game.state.timeShards || 0) + 30;
                 for (let i = 0; i < 3; i++) this.addExp(Game.state.maxExp || 100);
                 Game.state.rage = Game.state.maxRage || 100;
+                Game.state.secondChanceAvailable = true;
                 successMessage = '⏳ THOIKHONG999: +9.999G, +30💎, Tăng 3 Cấp & Đầy Nộ!';
                 isSuccess = true;
                 break;
@@ -2079,19 +2424,19 @@ Game.Systems = {
                 Game.state.weaponLevels.cyber_sword = Math.max(Game.state.weaponLevels.cyber_sword || 0, 5);
                 Game.state.currentWeapon = 'cyber_sword';
                 this.recalculateMaxStats();
-                successMessage = '🗡️ TANTHU2026: +8.888G, +10💎, +25 Giáp Nền & Kiếm Điện Tử +5!';
+                successMessage = '🗡️ TANTHU2026: +8.888G, +10💎 & Kiếm Điện Tử +5!';
                 isSuccess = true;
                 break;
 
             case 'SANBOSSMAX':
-                Game.state.gold += 20000;
-                Game.state.timeShards = (Game.state.timeShards || 0) + 20;
+                Game.state.gold += 25000;
+                Game.state.timeShards = (Game.state.timeShards || 0) + 25;
                 Game.state.unlockedWaypoints = [true, true, true];
                 this.unlockCharacter('iron_juggernaut');
-                this._grantRelicFree('relic_speed');
-                this._grantRelicFree('relic_thorn');
+                this._grantRelicFree('relic_frost_heart');
+                this._grantRelicFree('relic_haste_matrix');
                 this.recalculateMaxStats();
-                successMessage = '⚔️ SANBOSSMAX: +20.000G, +20💎, Mở Thiết Giáp, Full Trụ & 2 Cổ Vật!';
+                successMessage = '⚔️ SANBOSSMAX: +25k Vàng, +25💎, Mở Toàn Bộ Trụ & 2 Cổ Vật Cao Cấp!';
                 isSuccess = true;
                 break;
 
@@ -2155,6 +2500,11 @@ Game.Systems = {
             btnOpenAdmin.onclick = () => Game.Systems.toggleAdminPanel();
         }
 
+        const btnLeaderboard = document.getElementById('btn-open-leaderboard') || document.getElementById('hud-btn-leaderboard');
+        if (btnLeaderboard) {
+            btnLeaderboard.onclick = () => Game.Leaderboard.toggleLeaderboardModal();
+        }
+
         const pInputs = document.querySelectorAll('#auth-password, input[type="password"]');
         pInputs.forEach(input => {
             input.onkeydown = e => {
@@ -2162,7 +2512,7 @@ Game.Systems = {
             };
         });
 
-        // Gán phím tắt hoặc nút bấm kỹ năng Quay Ngược Thời Gian (phím R hoặc nút HUD nếu có)
+        // Phím tắt R để kích hoạt Chrono Rewind
         window.addEventListener('keydown', e => {
             if (e.key === 'r' || e.key === 'R') {
                 if (!Game.state.isPaused && Game.Auth.isLoggedIn) {
@@ -2206,19 +2556,82 @@ Game.Systems = {
         }, 18000);
     },
 
-    /**
-     * Update vòng lặp chính của Systems: Cập nhật Ring Buffer và Floating Texts
-     */
+    // VÒNG LẶP UPDATE HỆ THỐNG: QUẢN LÝ TIẾN HÓA TINH LINH, CỔ VẬT VÀ BẢO HIỂM HỒI SINH
     update: function (dt) {
         if (!Game.state.isPaused) {
+            // 1. Ghi nhận snapshot thời gian cho Chrono Rewind (Ring Buffer 5s)
             Game.ChronoRewind.recordSnapshot(dt);
             Game.FloatingTextPool.update(dt);
+
+            // 2. Kiểm tra kích hoạt HỒI SINH LƯỢNG TỬ (Second Chance - III.10) khi cạn máu
+            if (Game.player && Game.player.hp <= 0 && !Game.player.godMode) {
+                if (Game.state.secondChanceAvailable) {
+                    Game.ChronoRewind.triggerSecondChance();
+                }
+            }
+
+            // 3. Quản lý hồi phục Máu liên tục của Nhẫn Hồi Sinh (relic_regen_ring)
+            if (Game.player && Game.player.hp > 0 && Game.player.hp < Game.player.maxHp) {
+                if (Game.player.hpRegen > 0) {
+                    Game.player.hp = Math.min(Game.player.maxHp, Game.player.hp + Game.player.hpRegen * dt);
+                }
+            }
+
+            // 4. Quản lý hồi phục Khiên cơ bản
+            if (Game.player && Game.player.shield < Game.player.maxShield) {
+                if (Game.player.shieldCooldown > 0) {
+                    Game.player.shieldCooldown = Math.max(0, Game.player.shieldCooldown - dt);
+                } else {
+                    Game.player.shield = Math.min(Game.player.maxShield, Game.player.shield + (Game.player.maxShield * (Game.player.shieldRegenRate || 0.05)) * dt);
+                }
+            }
+
+            // 5. Kiểm tra Cổ Vật Bất Khuất (relic_last_stand: Máu dưới 25% kích khiên ảo)
+            if (Game.player.hasLastStand) {
+                if (Game.state.lastStandCooldown > 0) {
+                    Game.state.lastStandCooldown = Math.max(0, Game.state.lastStandCooldown - dt);
+                } else if (Game.player.hp > 0 && Game.player.hp < (Game.player.maxHp * 0.25)) {
+                    Game.player.shield = Math.min(Game.player.maxShield * 1.5, Game.player.shield + Math.round(Game.player.maxHp * 0.50));
+                    Game.state.lastStandCooldown = 60.0;
+                    Game.FloatingTextPool.spawn(Game.player.x, Game.player.y - 30, '🛡️ KHIÊN BẤT KHUẤT!', '#38bdf8');
+                    if (Game.Audio && typeof Game.Audio.playShieldPulse === 'function') Game.Audio.playShieldPulse();
+                }
+            }
+
+            // 6. TIẾN HÓA TINH LINH (Pet Evolution - V.1 & V.2)
+            if (Game.state.hasPet) {
+                // Tinh Linh cấp 2: Tự động tạo khiên bảo vệ người chơi mỗi 25s
+                if ((Game.state.petEvolutionLevel || 0) >= 2) {
+                    if ((Game.state.petShieldCooldown || 0) > 0) {
+                        Game.state.petShieldCooldown = Math.max(0, Game.state.petShieldCooldown - dt);
+                    } else if (Game.player.shield < Game.player.maxShield * 0.5) {
+                        Game.player.shield = Math.min(Game.player.maxShield, Game.player.shield + Math.round(Game.player.maxShield * 0.35));
+                        Game.state.petShieldCooldown = 25.0;
+                        Game.FloatingTextPool.spawn(Game.player.x, Game.player.y - 25, '✨ TINH LINH HỘ THỂ!', '#a78bfa');
+                        if (Game.Audio && typeof Game.Audio.playShieldPulse === 'function') Game.Audio.playShieldPulse();
+                    }
+                }
+
+                // Tinh Linh cấp 1+: Tự động bay đi nhặt tiền và ngọc rơi ở xa mép màn hình
+                if ((Game.state.petEvolutionLevel || 0) >= 1 && Game.World && Array.isArray(Game.World.droppedItems)) {
+                    for (let i = 0; i < Game.World.droppedItems.length; i++) {
+                        const item = Game.World.droppedItems[i];
+                        if (item && !item.collected) {
+                            const dx = item.x - Game.player.x;
+                            const dy = item.y - Game.player.y;
+                            const distSq = dx * dx + dy * dy;
+                            // Bán kính nhặt mở rộng lên tới 750px
+                            if (distSq < 750 * 750) {
+                                item.x += (Game.player.x - item.x) * 6.5 * dt;
+                                item.y += (Game.player.y - item.y) * 6.5 * dt;
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
 
-    /**
-     * Kích hoạt kỹ năng Quay Ngược Thời Gian
-     */
     triggerChronoRewind: function () {
         return Game.ChronoRewind.activate();
     },
@@ -2227,13 +2640,22 @@ Game.Systems = {
         Game.FloatingTextPool.spawn(Game.player.x, Game.player.y - 38, text, color);
     },
 
+    // CƠ CHẾ NHẶT VẬT PHẨM (KẾT HỢP CỔ VẬT GREED 25% X2)
     onItemPickedUp: function (type, amount = 1) {
+        let finalAmount = amount;
+
+        // relic_greed: 25% xác suất nhân đôi
+        if (Game.player && Game.player.hasGreedRelic && Math.random() < 0.25) {
+            finalAmount *= 2;
+            Game.FloatingTextPool.spawn(Game.player.x, Game.player.y - 50, '✨ X2 THU HOẠCH!', '#fde047');
+        }
+
         if (type === 'shard' || type === 'timeShard') {
-            Game.state.timeShards = (Game.state.timeShards || 0) + amount;
-            this.notify(`+${amount} 💎 Mảnh Thời Không!`, '#00e5ff');
+            Game.state.timeShards = (Game.state.timeShards || 0) + finalAmount;
+            this.notify(`+${finalAmount} 💎 Mảnh Thời Không!`, '#00e5ff');
         } else if (type === 'gold') {
-            Game.state.gold = (Game.state.gold || 0) + amount;
-            this.notify(`+${amount}G`, '#fde047');
+            Game.state.gold = (Game.state.gold || 0) + finalAmount;
+            this.notify(`+${finalAmount}G`, '#fde047');
         }
         if (Game.Audio && typeof Game.Audio.playCoin === 'function') {
             Game.Audio.playCoin();
@@ -2391,8 +2813,13 @@ Game.Systems = {
     },
 
     addExp: function (amount) {
-        const expGain = Math.max(0, Number(amount) || 0);
+        let expGain = Math.max(0, Number(amount) || 0);
         if (expGain <= 0) return;
+
+        // Cổ vật relic_greed: 25% nhân đôi EXP
+        if (Game.player && Game.player.hasGreedRelic && Math.random() < 0.25) {
+            expGain *= 2;
+        }
 
         this._ensureCharacterStateIntegrity();
         const cId = Game.state.selectedCharacter || 'time_traveler';
@@ -2446,8 +2873,8 @@ Game.Systems = {
 
         if (Game.state.chronoFreezeTimer <= 0) {
             let rageGain = isBoss ? 35 : isMiniBoss ? 25 : isElite ? 18 : 8;
-            if (Array.isArray(Game.state.equippedRelics) && Game.state.equippedRelics.includes('relic_assassin')) {
-                rageGain += 5;
+            if (Array.isArray(Game.state.equippedRelics) && Game.state.equippedRelics.includes('relic_haste_matrix')) {
+                rageGain += 3;
             }
             Game.state.rage = Math.min(
                 Game.state.maxRage || 100,
@@ -2547,11 +2974,11 @@ Game.Systems = {
         if (Game.Combat && typeof Game.Combat.useSkill === 'function') {
             Game.Combat.useSkill(3, { manualAim: false });
         } else {
-            if ((Game.state.rage || 0) < (Game.state.maxRage || 100)) {
-                this.notify('Nộ Thời Không chưa đầy!', '#c084fc');
+            if ((Game.state.rage || 0) < 100) {
+                this.notify('Nộ Thời Không chưa đủ 100!', '#c084fc');
                 return;
             }
-            Game.state.rage = 0;
+            Game.state.rage -= 100;
             Game.state.chronoFreezeTimer = 3.5;
             if (Game.Audio && typeof Game.Audio.playFreeze === 'function') Game.Audio.playFreeze();
             this.notify('NGƯNG ĐỌNG THỜI GIAN!', '#d500f9');
@@ -2732,24 +3159,60 @@ Game.Systems = {
         this.saveGame();
     },
 
-    buyPet: function () {
-        if (Game.state.hasPet) return;
-        if (Game.state.gold < 800) {
-            this.notify('Cần 800G để chiêu mộ Tinh Linh!', '#f87171');
-            return;
+    // TIẾN HÓA TINH LINH TRONG CỬA HÀNG (V.1 & V.2)
+    buyOrEvolvePet: function () {
+        if (!Game.state.hasPet) {
+            if (Game.state.gold < 800) {
+                this.notify('Cần 800G để chiêu mộ Tinh Linh!', '#f87171');
+                return;
+            }
+            Game.state.gold -= 800;
+            Game.state.hasPet = true;
+            Game.state.petEvolutionLevel = 0;
+            Game.Audio.playLevelUp();
+            this.notify('Chiêu mộ thành công Tinh Linh Thời Không!', '#00e5ff');
+        } else {
+            const curEvo = Game.state.petEvolutionLevel || 0;
+            if (curEvo >= 2) {
+                this.notify('Tinh Linh đã đạt cấp độ Tiến Hóa Tối Đa!', '#ffd740');
+                return;
+            }
+
+            const evolveCosts = [
+                { gold: 1500, shards: 5, name: 'Bậc 1: Tinh Linh Nhặt Đồ Xa (750px)' },
+                { gold: 3000, shards: 12, name: 'Bậc 2: Khiên Bảo Vệ Hộ Chủ (+35% Giáp)' }
+            ];
+
+            const targetCost = evolveCosts[curEvo];
+            if (Game.state.gold < targetCost.gold || (Game.state.timeShards || 0) < targetCost.shards) {
+                this.notify(`Tiến hóa cần ${targetCost.gold}G và ${targetCost.shards}💎 Mảnh Thời Không!`, '#f87171');
+                return;
+            }
+
+            Game.state.gold -= targetCost.gold;
+            Game.state.timeShards -= targetCost.shards;
+            Game.state.petEvolutionLevel = curEvo + 1;
+            Game.Audio.playLevelUp();
+            this.notify(`🌟 TIẾN HÓA THÀNH CÔNG: ${targetCost.name}!`, '#a78bfa');
         }
-        Game.state.gold -= 800;
-        Game.state.hasPet = true;
-        Game.Audio.playLevelUp();
-        this.notify('Chiêu mộ thành công Tinh Linh Thời Không!', '#00e5ff');
+
+        this.recalculateMaxStats();
         this.updateShopButtons();
         this.updateUI();
         this.saveGame();
     },
 
+    buyPet: function () {
+        this.buyOrEvolvePet();
+    },
+
+    // QUẢN LÝ MUA & TRANG BỊ CỔ VẬT (GIỚI HẠN TỐI ĐA 4 CỔ VẬT)
     buyOrToggleRelic: function (relicId) {
         const relic = this.relicsConfig[relicId];
         if (!relic) return;
+        if (!Array.isArray(Game.state.ownedRelics)) Game.state.ownedRelics = [];
+        if (!Array.isArray(Game.state.equippedRelics)) Game.state.equippedRelics = [];
+
         if (!Game.state.ownedRelics.includes(relicId)) {
             if (Game.state.gold < relic.price) {
                 this.notify(`Cần ${relic.price}G để mua ${relic.name}!`, '#f87171');
@@ -2759,14 +3222,17 @@ Game.Systems = {
             Game.state.ownedRelics.push(relicId);
             this._grantRelicFree(relicId);
             Game.Audio.playCoin();
+            this.notify(`Đã sở hữu Cổ Vật: ${relic.name}!`, '#4ade80');
         } else {
             const idx = Game.state.equippedRelics.indexOf(relicId);
             if (idx >= 0) {
                 Game.state.equippedRelics.splice(idx, 1);
+                this.notify(`Đã tháo Cổ Vật: ${relic.name}`, '#94a3b8');
             } else if (Game.state.equippedRelics.length < 4) {
                 Game.state.equippedRelics.push(relicId);
+                this.notify(`Đã gắn Cổ Vật: ${relic.name}!`, '#38bdf8');
             } else {
-                this.notify('Đã đạt giới hạn tối đa 4 Cổ Vật trang bị!', '#f87171');
+                this.notify('Đã gắn tối đa 4 Cổ Vật! Vui lòng tháo bớt.', '#f87171');
             }
         }
         this.recalculateMaxStats();
@@ -2791,10 +3257,10 @@ Game.Systems = {
             if (awakenBadge) {
                 awakenBadge.classList.remove('unlocked', 'tier-max');
                 if (curLvl >= 30) {
-                    awakenBadge.textContent = '🌌 THỨC TỈNH HƯ KHÔNG (+80 HP / +45 ST)';
+                    awakenBadge.textContent = '🌌 THỨC TỈNH HƯ KHÔNG (+80 HP / +40 Giáp / +20 Tốc / +45 ST)';
                     awakenBadge.classList.add('unlocked', 'tier-max');
                 } else if (curLvl >= 15) {
-                    awakenBadge.textContent = '🔥 THỨC TỈNH HUYẾT VŨ (+35 HP / +20 ST)';
+                    awakenBadge.textContent = '🔥 THỨC TỈNH HUYẾT VŨ (+35 HP / +20 Giáp / +20 ST)';
                     awakenBadge.classList.add('unlocked', 'tier-max');
                 } else if (curLvl >= 10) {
                     awakenBadge.textContent = '⚡ THỨC TỈNH CHÂN KHÔNG (+12 Tốc / +10 ST)';
@@ -2850,17 +3316,29 @@ Game.Systems = {
             btnHeal.textContent = pCd > 0 ? `Hồi chiêu (${pCd.toFixed(1)}s)` : `Mua (${50 * (Game.state.loopLevel || 1)}G)`;
         }
 
+        // Nút nâng cấp và tiến hóa Tinh Linh
         const btnPet = document.getElementById('btn-buy-pet');
         if (btnPet) {
-            btnPet.textContent = Game.state.hasPet ? 'Đã Chiêu Mộ' : 'Chiêu Mộ (800G)';
+            const evo = Game.state.petEvolutionLevel || 0;
+            if (!Game.state.hasPet) {
+                btnPet.textContent = 'Chiêu Mộ (800G)';
+            } else if (evo === 0) {
+                btnPet.textContent = 'Tiến Hóa Bậc 1 (Nhặt Đồ Xa: 1.500G & 5💎)';
+            } else if (evo === 1) {
+                btnPet.textContent = 'Tiến Hóa Bậc 2 (Khiên Hộ Thể: 3.000G & 12💎)';
+            } else {
+                btnPet.textContent = 'Tinh Linh Tối Thượng (Bậc 2 Max)';
+            }
         }
 
+        // Render toàn bộ 10 Cổ vật trong cửa hàng
         Object.keys(this.relicsConfig).forEach(rId => {
             const btnRelic = document.getElementById(`btn-relic-${rId}`);
             if (!btnRelic) return;
-            const owned = Game.state.ownedRelics.includes(rId);
-            const equipped = Game.state.equippedRelics.includes(rId);
+            const owned = Game.state.ownedRelics && Game.state.ownedRelics.includes(rId);
+            const equipped = Game.state.equippedRelics && Game.state.equippedRelics.includes(rId);
             btnRelic.textContent = !owned ? `Mua (${this.relicsConfig[rId].price}G)` : equipped ? 'Đang Gắn (Tháo)' : 'Trang Bị';
+            btnRelic.style.borderColor = equipped ? '#38bdf8' : owned ? '#22c55e' : '#475569';
         });
 
         this.waypointsConfig.forEach(wp => {
@@ -2905,14 +3383,15 @@ Game.Systems = {
         const shieldText = document.getElementById('shield-text');
         if (shieldText) shieldText.textContent = `KHIÊN: ${Math.ceil(p.shield)} / ${p.maxShield}`;
 
-        const rageVal = Math.min(100, Math.max(0, s.rage || 0));
+        const maxR = s.maxRage || 100;
+        const rageVal = Math.min(maxR, Math.max(0, s.rage || 0));
         const rageBar = document.getElementById('rage-bar');
         if (rageBar) {
-            rageBar.style.width = `${rageVal}%`;
+            rageBar.style.width = `${(rageVal / maxR) * 100}%`;
             rageBar.classList.toggle('rage-ready', rageVal >= 100);
         }
         const rageText = document.getElementById('rage-text');
-        if (rageText) rageText.textContent = `NỘ THỜI KHÔNG: ${Math.floor(rageVal)}%`;
+        if (rageText) rageText.textContent = `NỘ THỜI KHÔNG: ${Math.floor(rageVal)} / ${maxR}`;
 
         const expBar = document.getElementById('exp-bar');
         if (expBar) expBar.style.width = `${Math.min(100, Math.max(0, ((s.exp || 0) / (s.maxExp || 100)) * 100))}%`;
@@ -2938,9 +3417,15 @@ Game.Systems = {
         const weaponBadge = document.getElementById('weapon-hud-badge');
         if (weaponBadge) weaponBadge.textContent = `${wCfg.icon} ${wCfg.name} +${wLvl}`;
 
+        // Hiển thị Combat Power & Trạng thái Hồi Sinh Lượng Tử
         const currentCombatPower = this.calculateCombatPower();
         const cpEl = document.getElementById('combat-power-text');
         if (cpEl) cpEl.textContent = currentCombatPower.toLocaleString();
+
+        const secondChanceBadge = document.getElementById('second-chance-badge');
+        if (secondChanceBadge) {
+            secondChanceBadge.style.display = s.secondChanceAvailable ? 'inline-block' : 'none';
+        }
 
         this.updateTimelineBadge();
     },
@@ -2973,7 +3458,7 @@ Game.Systems = {
 };
 
 // ============================================================================
-// KHỞI CHẠY TỔNG HỢP KHI TẢI TRANG
+// KHỞI CHẠY TỔNG HỢP TOÀN BỘ FILE SYSTEMS KHI TRANG TẢI XONG
 // ============================================================================
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => Game.Systems.init());

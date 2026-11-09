@@ -1,22 +1,160 @@
 /**
  * ============================================================================
+ * TỰA GAME: KẺ DU HÀNH THỜI KHÔNG (CHRONO TRAVELER: ARPG ESPORTS)
  * FILE: controls.js
- * HỆ THỐNG ĐIỀU KHIỂN & GIAO DIỆN CẢM ỨNG / PC HUD CHUYÊN NGHIỆP (ESPORTS ARPG)
- * DỰ ÁN: KẺ DU HÀNH THỜI KHÔNG
+ * PHIÊN BẢN: V.10 ESPORTS TOURNAMENT & HAPTIC ENGINE UPGRADE
+ * QUY MÔ DỰ ÁN: FULL COMPLETE JAVASCRIPT ENGINE (KHÔNG CẮT BỚT CODE)
  * ============================================================================
- * TỐI ƯU HÓA MOBILE TOÀN DIỆN:
- * 1. Đa điểm độc lập (Multi-touch Isolation): Quản lý riêng biệt joystickTouchId
- *    (nửa màn hình trái) và skillTouchId (nửa màn hình phải), chống đơ cần gạt.
- * 2. Tiết lưu sự kiện touchmove: Cache tọa độ thô trong sự kiện và chỉ tính toán
- *    vector/ngắm 1 lần mỗi frame (chống sụt frame trên màn hình 120Hz/144Hz).
- * 3. Floating Joystick: Tâm cần gạt xuất hiện linh hoạt ngay tại vị trí ngón cái chạm.
- * 4. Smart Auto-Aim & Input Buffering (150ms): Tự động xoay người khóa quái/Boss
- *    gần nhất khi Quick-Tap; lưu đệm kỹ năng trong 150ms khi còn CD để ra chiêu tức thì.
+ * ĐẶC TẢ HỆ THỐNG ĐIỀU KHIỂN & GIAO DIỆN CẢM ỨNG / PC HUD:
+ * 1. Multi-touch Isolation (Cô Lập Đa Điểm Tuyệt Đối):
+ *    - Quản lý độc lập joystickTouchId (bán cầu màn hình bên trái) và các 
+ *      touchId nút kỹ năng bên phải. Khi thả ngón tay joystick, tuyệt đối không 
+ *      ảnh hưởng đến việc kéo ngắm chiêu thức và ngược lại.
+ * 2. Smart Haptic Feedback Engine (V.10):
+ *    - Rung xúc giác phân tầng theo nhịp combo đòn đánh thường (Step 0, 1, 2).
+ *    - Rung giật nhịp ba cảnh báo vỡ giáp năng lượng (Shield Break).
+ *    - Rung xung kích sắc nét khi Phản Đòn (Parry) thành công hoặc Perfect Dodge.
+ *    - Lưu trạng thái Bật/Tắt rung trong LocalStorage và tích hợp nút toggle trên HUD.
+ * 3. Modal-Safe Mobile Touch Handler:
+ *    - Khi mở Character Select Modal hoặc bất kỳ bảng giao diện nào, tự động nhả
+ *      toàn bộ input và giải phóng e.preventDefault() để người dùng cuộn/chọn mượt mà.
+ * 4. Input Buffering (Bộ đệm 150ms) & Hold-to-Fire Auto-Combo:
+ *    - Ghi nhận lệnh xuất chiêu trước khi hồi chiêu hoàn tất trong 150ms.
+ *    - Giữ nút Đánh / Space để xả combo liên tục mượt mà ở tốc độ khung hình cao.
+ * ============================================================================
  */
 
 window.Game = window.Game || {};
 
+/**
+ * ============================================================================
+ * 1. HAPTIC ENGINE (HỆ THỐNG ĐIỀU KHIỂN XÚC GIÁC THÔNG MINH V.10)
+ * ============================================================================
+ */
 window.Game.Controls = {
+    // -------------------------------------------------------------
+    // HAPTIC FEEDBACK SUBSYSTEM
+    // -------------------------------------------------------------
+    HapticEngine: {
+        STORAGE_KEY: 'CHRONO_HAPTIC_ENABLED_V10',
+        enabled: true,
+        supported: false,
+        lastVibrateTime: 0,
+        minIntervalMs: 25, // Ngăn chặn xung đột rung quá dày đặc gây đơ phần cứng
+
+        init: function () {
+            this.supported = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+            try {
+                const saved = localStorage.getItem(this.STORAGE_KEY);
+                if (saved !== null) {
+                    this.enabled = saved === 'true';
+                } else {
+                    this.enabled = true; // Mặc định bật phản hồi xúc giác
+                }
+            } catch (err) {
+                this.enabled = true;
+            }
+        },
+
+        isEnabled: function () {
+            return this.enabled && this.supported;
+        },
+
+        setEnabled: function (state) {
+            this.enabled = !!state;
+            try {
+                localStorage.setItem(this.STORAGE_KEY, this.enabled ? 'true' : 'false');
+            } catch (e) {}
+
+            if (this.enabled) {
+                this.vibrate([15, 30, 20]);
+            }
+
+            if (window.Game.Systems && typeof window.Game.Systems.notify === 'function') {
+                const msg = this.enabled 
+                    ? '📳 RUNG PHẢN HỒI XÚC GIÁC: ĐÃ BẬT' 
+                    : '📴 RUNG PHẢN HỒI XÚC GIÁC: ĐÃ TẮT';
+                window.Game.Systems.notify(msg, this.enabled ? '#10b981' : '#94a3b8');
+            }
+        },
+
+        toggle: function () {
+            this.setEnabled(!this.enabled);
+            return this.enabled;
+        },
+
+        vibrate: function (pattern) {
+            if (!this.enabled || !this.supported) return false;
+            const now = performance.now();
+            if (now - this.lastVibrateTime < this.minIntervalMs) return false;
+
+            try {
+                navigator.vibrate(pattern);
+                this.lastVibrateTime = now;
+                return true;
+            } catch (err) {
+                return false;
+            }
+        },
+
+        // Nhịp rung Combo 3 đòn đánh thường (Cường độ tăng tiến theo lực đòn đánh)
+        triggerComboHaptic: function (comboStep) {
+            if (!this.enabled || !this.supported) return;
+            const step = Math.max(0, parseInt(comboStep, 10) || 0) % 3;
+            if (step === 0) {
+                this.vibrate([10]); // Đòn 1: Nhẹ, dứt khoát
+            } else if (step === 1) {
+                this.vibrate([16]); // Đòn 2: Trung bình, sắc nét
+            } else {
+                this.vibrate([25, 30, 45]); // Đòn 3: Kích xung chém quét cực mạnh
+            }
+        },
+
+        // Rung giật mạnh cảnh báo khiên chắn vỡ vụn
+        triggerShieldBreakHaptic: function () {
+            if (!this.enabled || !this.supported) return;
+            // Nhịp xung giật mạnh 3 đợt: Cảnh báo nguy hiểm cận kề
+            this.vibrate([70, 40, 90]);
+        },
+
+        // Rung phản hồi sắc nét khi Chém Phản Đạn (Parry) hoặc Lướt Hoàn Hảo (Perfect Dodge)
+        triggerParryHaptic: function () {
+            if (!this.enabled || !this.supported) return;
+            // Xung nhịp đôi cao tần mô phỏng âm thanh va chạm kim loại cực chuẩn
+            this.vibrate([18, 25, 50]);
+        },
+
+        // Rung khi thực hiện pha Lướt Hoàn Hảo (Perfect Dodge)
+        triggerPerfectDodgeHaptic: function () {
+            if (!this.enabled || !this.supported) return;
+            this.vibrate([15, 20, 35]);
+        },
+
+        // Rung xuất chiêu kỹ năng
+        triggerSkillCastHaptic: function (skillIndex) {
+            if (!this.enabled || !this.supported) return;
+            if (skillIndex === 0) {
+                this.vibrate([12]);
+            } else if (skillIndex === 1) {
+                this.vibrate([22]);
+            } else if (skillIndex === 2) {
+                this.vibrate([35]);
+            } else if (skillIndex === 3) {
+                // Chiêu cuối Nộ Lượng Tử: Rung rung uy lực
+                this.vibrate([40, 30, 60]);
+            }
+        },
+
+        // Rung cảnh báo Quá Nhiệt Laser (Heat >= 80)
+        triggerOverheatWarningHaptic: function () {
+            if (!this.enabled || !this.supported) return;
+            this.vibrate([20, 30, 20, 30]);
+        }
+    },
+
+    // -------------------------------------------------------------
+    // BIẾN THÀNH PHẦN & TÀI NGUYÊN NỀN TẢNG
+    // -------------------------------------------------------------
     canvas: null,
     uiScale: 1.0,
 
@@ -27,7 +165,7 @@ window.Game.Controls = {
     keys: {},
     mouseDownButtonKey: null,
 
-    // Chế độ Ngắm Chuột PC (PC Cursor Aim)
+    // Chế độ Ngắm Chuột PC (PC Cursor Aim Mode)
     mouseAimActive: false,
     rightMouseDown: false,
     mouseScreenPos: { x: 0, y: 0 },
@@ -45,25 +183,25 @@ window.Game.Controls = {
         expireTime: 0
     },
 
-    // Cache tọa độ chuyển động cảm ứng để tiết lưu (Throttle cho 120Hz)
+    // Cache tọa độ cảm ứng để tiết lưu (Throttle cho màn hình 120Hz/144Hz)
     _pendingJoystickPos: { x: 0, y: 0, dirty: false },
 
     // Hiệu ứng Lóe sáng viền nút khi hồi chiêu xong (Ready Flash Rings)
     skillFlashStates: [
-        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // attack (skill 0)
-        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // skill 1
-        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // skill 2
-        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }  // skill 3 (Rage)
+        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // Đánh thường (Skill 0)
+        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // Skill 1 (Lướt)
+        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }, // Skill 2 (Bão Không Thời)
+        { prevCd: 0, flashAlpha: 0, flashTimer: 0 }  // Skill 3 (Chiêu Cuối / Rage)
     ],
 
     // Cờ chế độ Chỉnh sửa HUD (HUD Customizer)
     isEditMode: false,
-    STORAGE_KEY: 'CUSTOM_HUD_LAYOUT_V2',
+    STORAGE_KEY: 'CUSTOM_HUD_LAYOUT_V3',
     draggingHudKey: null,
     dragTouchId: null,
     dragOffset: { x: 0, y: 0 },
 
-    // Kích thước gốc của các nút
+    // Kích thước bán kính gốc của các nút trên canvas chuẩn 1080p
     baseRadii: {
         joystick: 54,
         attack: 44,
@@ -75,13 +213,15 @@ window.Game.Controls = {
         interact: 27
     },
 
+    // Vùng bấm trên thanh công cụ Customizer
     editToolbarRects: {
-        save: { x: 0, y: 0, w: 120, h: 38 },
-        reset: { x: 0, y: 0, w: 120, h: 38 },
-        cancel: { x: 0, y: 0, w: 90, h: 38 }
+        save: { x: 0, y: 0, w: 105, h: 36 },
+        reset: { x: 0, y: 0, w: 105, h: 36 },
+        haptic: { x: 0, y: 0, w: 105, h: 36 },
+        cancel: { x: 0, y: 0, w: 80, h: 36 }
     },
 
-    // Floating Virtual Joystick
+    // Virtual Floating Joystick (Cần gạt ảo tự do)
     joystick: {
         active: false,
         touchId: null,
@@ -101,7 +241,7 @@ window.Game.Controls = {
     lastAngle: 0,
     ripples: [],
 
-    // Danh sách các nút điều khiển
+    // Danh mục các nút chức năng trên màn hình
     buttons: {
         attack: {
             index: 0,
@@ -176,7 +316,7 @@ window.Game.Controls = {
         interact: { x: 0, y: 0, r: 27, keyHint: 'E', pressed: false, touchId: null }
     },
 
-    // Vùng Hủy Chiêu (Cancel Zone)
+    // Vùng hủy chiêu thức khi kéo vuốt lên trên
     cancelZone: {
         x: 0,
         y: 80,
@@ -186,9 +326,9 @@ window.Game.Controls = {
 
     _lastCdTickTime: 0,
 
-    // ==========================================
-    // TOÁN HỌC & LÀM MƯỢT GÓC (ANGULAR LERP)
-    // ==========================================
+    // =========================================================================
+    // TOÁN HỌC & LÀM MƯỢT GÓC (ANGULAR INTERPOLATION)
+    // =========================================================================
     _lerpAngle: function (current, target, t) {
         let diff = (target - current) % (Math.PI * 2);
         if (diff < -Math.PI) diff += Math.PI * 2;
@@ -196,8 +336,12 @@ window.Game.Controls = {
         return current + diff * Math.max(0, Math.min(1, t));
     },
 
+    // =========================================================================
+    // KHỞI TẠO & ĐIỀU CHỈNH KÍCH THƯỚC (INITIALIZATION & RESPONSIVE)
+    // =========================================================================
     init: function (canvas) {
         this.canvas = canvas || document.querySelector('canvas');
+        this.HapticEngine.init();
 
         const initialW = (this.canvas && this.canvas.width) || window.innerWidth || 1280;
         const initialH = (this.canvas && this.canvas.height) || window.innerHeight || 720;
@@ -239,22 +383,26 @@ window.Game.Controls = {
     _updateEditToolbarRects: function (width, height) {
         const centerX = width * 0.5;
         const topY = Math.max(16, 20 * (this.uiScale || 1.0));
-        const btnW = 116;
-        const btnH = 38;
-        const gap = 10;
+        const btnW = 105;
+        const btnH = 36;
+        const gap = 8;
 
-        const totalW = btnW * 3 + gap * 2;
+        const totalW = btnW * 4 + gap * 3;
         const startX = centerX - totalW / 2;
 
         this.editToolbarRects.save = { x: startX, y: topY + 46, w: btnW, h: btnH };
-        this.editToolbarRects.reset = { x: startX + btnW + gap, y: topY + 46, w: btnW, h: btnH };
-        this.editToolbarRects.cancel = { x: startX + (btnW + gap) * 2, y: topY + 46, w: btnW, h: btnH };
+        this.editToolbarRects.reset = { x: startX + (btnW + gap), y: topY + 46, w: btnW, h: btnH };
+        this.editToolbarRects.haptic = { x: startX + (btnW + gap) * 2, y: topY + 46, w: btnW, h: btnH };
+        this.editToolbarRects.cancel = { x: startX + (btnW + gap) * 3, y: topY + 46, w: btnW, h: btnH };
     },
 
+    // =========================================================================
+    // QUẢN LÝ BỐ CỤC TÙY CHỈNH (HUD CUSTOMIZER LOGIC)
+    // =========================================================================
     toggleEditMode: function (forceState) {
         this.isEditMode = typeof forceState === 'boolean' ? forceState : !this.isEditMode;
         this.releaseAllInputs();
-        this._vibrate(30);
+        this.HapticEngine.vibrate(30);
 
         if (typeof document !== 'undefined' && document.body) {
             document.body.classList.toggle('hud-edit-active', this.isEditMode);
@@ -266,19 +414,19 @@ window.Game.Controls = {
 
         if (window.Game.Systems && typeof window.Game.Systems.notify === 'function') {
             const msg = this.isEditMode
-                ? '⚙️ CHẾ ĐỘ CHỈNH SỬA NÚT: Kéo các nút để đổi vị trí!'
-                : '✅ ĐÃ THOÁT CHẾ ĐỘ CHỈNH SỬA NÚT';
+                ? '⚙️ CHẾ ĐỘ CHỈNH NÚT: Chạm & Kéo nút bất kỳ để đổi vị trí!'
+                : '✅ ĐÃ THOÁT CHẾ ĐỘ CHỈNH SỬA BỐ CỤC NÚT';
             window.Game.Systems.notify(msg, this.isEditMode ? '#f59e0b' : '#10b981');
         }
     },
 
     toggleMouseAim: function (forceState) {
         this.mouseAimActive = typeof forceState === 'boolean' ? forceState : !this.mouseAimActive;
-        this._vibrate(20);
+        this.HapticEngine.vibrate(20);
         if (window.Game.Systems && typeof window.Game.Systems.notify === 'function') {
             const msg = this.mouseAimActive
-                ? '🎯 CHẾ ĐỘ NGẮM CHUỘT PC: ĐÃ BẬT (Ấn F để tắt)'
-                : '🎯 CHẾ ĐỘ NGẮM CHUỘT PC: ĐÃ TẮT';
+                ? '🎯 NGẮM CHUỘT PC (PC CURSOR AIM): ĐÃ BẬT [Phím F để tắt]'
+                : '🎯 NGẮM CHUỘT PC (PC CURSOR AIM): ĐÃ TẮT';
             window.Game.Systems.notify(msg, this.mouseAimActive ? '#00f2fe' : '#94a3b8');
         }
     },
@@ -304,18 +452,18 @@ window.Game.Controls = {
 
         try {
             localStorage.setItem(this.STORAGE_KEY, JSON.stringify(layoutData));
-            this._vibrate([20, 50, 20]);
+            this.HapticEngine.vibrate([20, 50, 20]);
             if (window.Game.Systems && typeof window.Game.Systems.notify === 'function') {
                 window.Game.Systems.notify('💾 Đã lưu vị trí nút thành công!', '#10b981');
             }
         } catch (e) {
-            console.error('Không thể lưu bố cục HUD:', e);
+            console.error('Không thể lưu cấu hình HUD vào Storage:', e);
         }
     },
 
     loadCustomLayout: function (width, height) {
         try {
-            const raw = localStorage.getItem(this.STORAGE_KEY);
+            const raw = localStorage.getItem(this.STORAGE_KEY) || localStorage.getItem('CUSTOM_HUD_LAYOUT_V2');
             if (!raw) return false;
             const data = JSON.parse(raw);
             if (!data || !data.buttons) return false;
@@ -347,7 +495,7 @@ window.Game.Controls = {
             this.cancelZone.r = 45 * this.uiScale;
             return true;
         } catch (e) {
-            console.error('Lỗi khi đọc cấu hình HUD:', e);
+            console.error('Lỗi phân tích cú pháp bố cục HUD:', e);
             return false;
         }
     },
@@ -397,23 +545,16 @@ window.Game.Controls = {
     resetAndClearSavedLayout: function () {
         try {
             localStorage.removeItem(this.STORAGE_KEY);
+            localStorage.removeItem('CUSTOM_HUD_LAYOUT_V2');
             localStorage.removeItem('CUSTOM_HUD_LAYOUT');
         } catch (e) {}
         const w = (this.canvas && this.canvas.width) || window.innerWidth;
         const h = (this.canvas && this.canvas.height) || window.innerHeight;
         this._resetToDefaultLayout(w, h);
-        this._vibrate(20);
+        this.HapticEngine.vibrate(25);
         if (window.Game.Systems && typeof window.Game.Systems.notify === 'function') {
-            window.Game.Systems.notify('🔄 Đã khôi phục vị trí nút mặc định!', '#38bdf8');
+            window.Game.Systems.notify('🔄 Đã khôi phục bố cục nút về mặc định!', '#38bdf8');
         }
-    },
-
-    _vibrate: function (ms) {
-        try {
-            if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-                navigator.vibrate(ms || 15);
-            }
-        } catch (err) {}
     },
 
     _spawnRipple: function (btn, color) {
@@ -428,17 +569,30 @@ window.Game.Controls = {
         });
     },
 
+    /**
+     * KIỂM TRA KHÓA ĐIỀU KHIỂN & ĐẢM BẢO MODAL HOẠT ĐỘNG HOÀN TOÀN TỰ DO
+     */
     isControlLocked: function () {
         const state = window.Game && window.Game.state;
         if (state && state.isPaused === true) return true;
 
         if (typeof document !== 'undefined') {
-            const shopModal = document.getElementById('shop-modal');
-            if (shopModal && !shopModal.classList.contains('hidden')) return true;
-            const giftModal = document.getElementById('giftcode-modal');
-            if (giftModal && !giftModal.classList.contains('hidden')) return true;
-            const charModal = document.getElementById('character-select-modal');
-            if (charModal && !charModal.classList.contains('hidden')) return true;
+            // Danh sách toàn bộ các modal có thể mở trong trận đấu
+            const modalIds = [
+                'character-select-modal',
+                'shop-modal',
+                'giftcode-modal',
+                'talent-tree-modal',
+                'leaderboard-modal',
+                'combat-recap-modal'
+            ];
+
+            for (let i = 0; i < modalIds.length; i++) {
+                const el = document.getElementById(modalIds[i]);
+                if (el && !el.classList.contains('hidden') && el.style.display !== 'none') {
+                    return true;
+                }
+            }
         }
         return false;
     },
@@ -516,6 +670,10 @@ window.Game.Controls = {
             this.resetAndClearSavedLayout();
             return true;
         }
+        if (this._isPointInRect(x, y, this.editToolbarRects.haptic)) {
+            this.HapticEngine.toggle();
+            return true;
+        }
         if (this._isPointInRect(x, y, this.editToolbarRects.cancel)) {
             this.loadCustomLayout(w, h);
             this.toggleEditMode(false);
@@ -533,7 +691,7 @@ window.Game.Controls = {
                 this.dragOffset.x = x - hitElement.target.x;
                 this.dragOffset.y = y - hitElement.target.y;
             }
-            this._vibrate(12);
+            this.HapticEngine.vibrate(12);
             return true;
         }
         return false;
@@ -573,20 +731,20 @@ window.Game.Controls = {
     },
 
     _handleMinimapTap: function () {
-        this._vibrate(15);
-        const state = window.Game && window.Game.state;
+        this.HapticEngine.vibrate(15);
+        const state = window.Game.state;
         if (state) state.minimapExpanded = !state.minimapExpanded;
 
         if (window.Game.World && typeof window.Game.World.toggleMinimapZoom === 'function') {
             window.Game.World.toggleMinimapZoom();
         } else if (window.Game.Systems && typeof window.Game.Systems.notify === 'function') {
-            const modeText = state && state.minimapExpanded ? 'Phóng to Radar Minimap' : 'Thu gọn Radar Minimap';
+            const modeText = state && state.minimapExpanded ? 'Phóng to Radar Căn Cứ' : 'Thu nhỏ Radar Căn Cứ';
             window.Game.Systems.notify('🗺️ ' + modeText, '#38bdf8');
         }
     },
 
     /**
-     * TÌM KIẾM QUÁI / BOSS GẦN NHẤT ĐỂ SMART AUTO-AIM
+     * TÌM KIẾM QUÁI / BOSS GẦN NHẤT ĐỂ SMART AUTO-AIM KHÓA MỤC TIÊU
      */
     _findNearestAutoAimTarget: function (maxRange) {
         const player = window.Game.player;
@@ -596,7 +754,7 @@ window.Game.Controls = {
         const enemies = window.Game.Enemies.getActiveList();
         if (!enemies || enemies.length === 0) return null;
 
-        const searchRange = maxRange || 520;
+        const searchRange = maxRange || 540;
         let bestTarget = null;
         let minScore = Infinity;
 
@@ -610,9 +768,9 @@ window.Game.Controls = {
 
             if (dist > searchRange) continue;
 
-            // Ưu tiên Boss (nhân hệ số giảm khoảng cách ảo để khóa Boss trước)
+            // Ưu tiên Boss (nhân hệ số giảm khoảng cách ảo để khóa Boss trước tiên)
             const isBoss = !!(e.isBoss || e.type === 'boss' || (e.maxHp && e.maxHp >= 500));
-            const score = isBoss ? dist * 0.65 : dist;
+            const score = isBoss ? dist * 0.62 : dist;
 
             if (score < minScore) {
                 minScore = score;
@@ -650,7 +808,7 @@ window.Game.Controls = {
         if (!options.manualAim || options.autoAimOnTap) {
             const player = window.Game.player;
             if (player) {
-                const target = this._findNearestAutoAimTarget(550);
+                const target = this._findNearestAutoAimTarget(560);
                 if (target) {
                     const autoAngle = Math.atan2(target.y - player.y, target.x - player.x);
                     player.angle = autoAngle;
@@ -664,7 +822,7 @@ window.Game.Controls = {
         }
 
         if (isInitialPress) {
-            this._vibrate(skillIndex === 3 ? 25 : 15);
+            this.HapticEngine.triggerSkillCastHaptic(skillIndex);
             const btnMap = [this.buttons.attack, this.buttons.skill1, this.buttons.skill2, this.buttons.skill3];
             const color = (currentSkill && currentSkill.color) || '#38bdf8';
             if (btnMap[skillIndex]) {
@@ -679,7 +837,7 @@ window.Game.Controls = {
 
     _triggerInteract: function () {
         if (this.isControlLocked()) return;
-        this._vibrate(15);
+        this.HapticEngine.vibrate(15);
         this._spawnRipple(this.buttons.interact, '#facc15');
         if (window.Game.Systems && typeof window.Game.Systems.interact === 'function') {
             window.Game.Systems.interact();
@@ -688,7 +846,7 @@ window.Game.Controls = {
 
     _triggerSwitchWeapon: function () {
         if (this.isControlLocked()) return;
-        this._vibrate(15);
+        this.HapticEngine.vibrate(15);
         this._spawnRipple(this.buttons.switchWeapon, '#38bdf8');
         if (window.Game.Systems && typeof window.Game.Systems.cycleWeapon === 'function') {
             window.Game.Systems.cycleWeapon();
@@ -697,7 +855,7 @@ window.Game.Controls = {
 
     _triggerSwitchTimeline: function (targetTimeline) {
         if (this.isControlLocked()) return;
-        this._vibrate(18);
+        this.HapticEngine.vibrate(18);
         this._spawnRipple(this.buttons.timeShift, '#06b6d4');
         if (window.Game.Systems && typeof window.Game.Systems.switchTimeline === 'function') {
             window.Game.Systems.switchTimeline(targetTimeline);
@@ -768,7 +926,7 @@ window.Game.Controls = {
         if (dist > 0.001) {
             const angle = Math.atan2(rawDy, rawDx);
 
-            // Floating dynamic follow: Tâm trôi theo ngón tay nếu kéo vượt quá bán kính
+            // Floating Dynamic Follow: Tâm cần gạt tự trôi theo ngón tay cái nếu kéo vượt bán kính
             if (dist > maxR) {
                 const extra = dist - maxR;
                 this.joystick.originX += Math.cos(angle) * extra;
@@ -803,7 +961,7 @@ window.Game.Controls = {
     },
 
     /**
-     * TIẾT LƯU: XỬ LÝ TOÀN BỘ CÁC CHẠM CẢM ỨNG 1 LẦN MỖI FRAME
+     * TIẾT LƯU: XỬ LÝ TOÀN BỘ CÁC CHẠM CẢM ỨNG 1 LẦN MỖI FRAME (THROTTLE CHO 120HZ)
      */
     _processPendingInputs: function () {
         // 1. Cập nhật Vector Joystick từ vị trí chạm đã lưu
@@ -848,16 +1006,18 @@ window.Game.Controls = {
         }
     },
 
-    // ==========================================
-    // SỰ KIỆN CẢM ỨNG ĐA ĐIỂM (ISOLATED MULTI-TOUCH)
-    // ==========================================
+    // =========================================================================
+    // SỰ KIỆN CẢM ỨNG ĐA ĐIỂM ĐỘC LẬP (ISOLATED MULTI-TOUCH)
+    // SỬA TRIỆT ĐỂ LỖI KẸT CẢM ỨNG KHI MỞ BẢNG CHỌN NHÂN VẬT & MODAL
+    // =========================================================================
     _bindTouchEvents: function (canvas) {
         canvas.addEventListener(
             'touchstart',
             (e) => {
+                // NẾU CÓ MODAL ĐANG MỞ: TUYỆT ĐỐI KHÔNG GỌI e.preventDefault() ĐỂ NGƯỜI DÙNG CUỘN VÀ CHỌN
                 if (this.isControlLocked()) {
                     this.releaseAllInputs();
-                    return;
+                    return; // Nhả qua cho trình duyệt xử lý tương tác DOM HTML
                 }
 
                 e.preventDefault();
@@ -879,7 +1039,7 @@ window.Game.Controls = {
                     }
                     if (pos.x <= 130 && pos.y <= 130) continue;
 
-                    // KIỂM TRA NỬA PHẢI HOẶC VÙNG NÚT: Nút kỹ năng / Thao tác
+                    // KIỂM TRA NỬA PHẢI HOẶC VÙNG NÚT: Kỹ năng / Thao tác
                     const hit = this._findHitRightButton(pos.x, pos.y);
                     if (hit) {
                         hit.btn.pressed = true;
@@ -920,7 +1080,7 @@ window.Game.Controls = {
                         pos.y >= canvasH - 95 * (this.uiScale || 1.0);
                     if (isBottomCenterHud) continue;
 
-                    // FLOATING JOYSTICK: Chạm vào nửa màn hình trái (x < canvasW * 0.5)
+                    // FLOATING JOYSTICK: Nửa màn hình trái (x < canvasW * 0.5)
                     if (pos.x < canvasW * 0.5 && this.joystick.touchId === null) {
                         const maxR = this.joystick.maxRadius;
                         const clampOriginX = Math.max(maxR + 10, Math.min(canvasW * 0.44, pos.x));
@@ -949,7 +1109,7 @@ window.Game.Controls = {
             (e) => {
                 if (this.isControlLocked()) {
                     this.releaseAllInputs();
-                    return;
+                    return; // Cho phép cuộn trang modal tự nhiên
                 }
                 e.preventDefault();
 
@@ -962,7 +1122,7 @@ window.Game.Controls = {
                         continue;
                     }
 
-                    // 1. Tiết lưu Joystick: Chỉ lưu tọa độ chạm thô
+                    // 1. Tiết lưu Joystick: Lưu tọa độ thô, không tính vector ngay lập tức
                     if (this.joystick.active && t.identifier === this.joystick.touchId) {
                         this._pendingJoystickPos.x = pos.x;
                         this._pendingJoystickPos.y = pos.y;
@@ -970,7 +1130,7 @@ window.Game.Controls = {
                         continue;
                     }
 
-                    // 2. Tiết lưu Kéo ngắm kỹ năng: Chỉ lưu tọa độ chạm thô
+                    // 2. Tiết lưu Kéo ngắm kỹ năng
                     for (let key in this.buttons) {
                         const btn = this.buttons[key];
                         if (btn.touchId === t.identifier && typeof btn.index === 'number') {
@@ -986,7 +1146,12 @@ window.Game.Controls = {
         );
 
         const handleTouchEnd = (e) => {
+            if (this.isControlLocked()) {
+                this.releaseAllInputs();
+                return;
+            }
             e.preventDefault();
+
             for (let i = 0; i < e.changedTouches.length; i++) {
                 const t = e.changedTouches[i];
 
@@ -995,7 +1160,7 @@ window.Game.Controls = {
                     continue;
                 }
 
-                // 1. Thả ngón tay Joystick ở nửa trái: Độc lập hoàn toàn, không ảnh hưởng kỹ năng
+                // 1. Thả ngón tay Joystick ở nửa trái: Độc lập 100%, không ảnh hưởng nút kỹ năng
                 if (this.joystick.active && t.identifier === this.joystick.touchId) {
                     this.joystick.active = false;
                     this.joystick.touchId = null;
@@ -1007,7 +1172,7 @@ window.Game.Controls = {
                     continue;
                 }
 
-                // 2. Thả ngón tay Kỹ năng ở nửa phải: Độc lập hoàn toàn, không ảnh hưởng joystick
+                // 2. Thả ngón tay Kỹ năng ở nửa phải: Độc lập 100%, không ảnh hưởng cần gạt di chuyển
                 for (let key in this.buttons) {
                     const btn = this.buttons[key];
                     if (btn.touchId === t.identifier) {
@@ -1032,7 +1197,7 @@ window.Game.Controls = {
                                     }, true);
                                 }
                             } else {
-                                this._vibrate(35);
+                                this.HapticEngine.vibrate(35);
                             }
                         }
 
@@ -1063,9 +1228,9 @@ window.Game.Controls = {
         canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
     },
 
-    // ==========================================
-    // SỰ KIỆN CHUỘT (PC MOUSE AIM & CONTROLS)
-    // ==========================================
+    // =========================================================================
+    // SỰ KIỆN CHUỘT (PC MOUSE AIM & ESPORTS CONTROL)
+    // =========================================================================
     _bindMouseEvents: function (canvas) {
         canvas.addEventListener('contextmenu', (e) => {
             e.preventDefault();
@@ -1079,6 +1244,7 @@ window.Game.Controls = {
             const pos = this._getCanvasCoords(e.clientX, e.clientY);
             this._updateMouseWorldPos(pos.x, pos.y);
 
+            // Chuột phải: Hướng xoay người ngắm tức thì
             if (e.button === 2) {
                 e.preventDefault();
                 this.rightMouseDown = true;
@@ -1090,6 +1256,7 @@ window.Game.Controls = {
                 return;
             }
 
+            // Chuột trái
             if (e.button === 0) {
                 if (this.isEditMode) {
                     this._handleEditPointerDown(pos.x, pos.y, 'MOUSE');
@@ -1236,9 +1403,9 @@ window.Game.Controls = {
         });
     },
 
-    // ==========================================
-    // SỰ KIỆN BÀN PHÍM (KEYBOARD BINDINGS)
-    // ==========================================
+    // =========================================================================
+    // SỰ KIỆN BÀN PHÍM ESPORTS (KEYBOARD SHORTCUTS)
+    // =========================================================================
     _bindKeyboardEvents: function () {
         window.addEventListener('keydown', (e) => {
             const code = e.code;
@@ -1343,10 +1510,10 @@ window.Game.Controls = {
             this.releaseAllInputs();
         });
     },
-
-    // ==========================================
-    // CẬP NHẬT TRẠNG THÁI & HỒI CHIÊU (TICK LOGIC)
-    // ==========================================
+    // [HẾT PHẦN 1 - DỪNG TRỌN VẸN SAU HÀM _bindKeyboardEvents]
+// =========================================================================
+    // CẬP NHẬT TRẠNG THÁI & HỒI CHIÊU (TICK LOGIC & INPUT BUFFERING)
+    // =========================================================================
     _tickCooldowns: function () {
         const nowSec = performance.now() * 0.001;
         const nowMs = performance.now();
@@ -1354,7 +1521,7 @@ window.Game.Controls = {
         const dt = Math.min(0.1, Math.max(0, nowSec - this._lastCdTickTime));
         this._lastCdTickTime = nowSec;
 
-        // 1. Tiết lưu: Xử lý Joystick & Vuốt ngắm thô gom về 1 lần/frame
+        // 1. Tiết lưu: Xử lý Joystick & Vuốt ngắm thô gom về 1 lần/frame (120Hz/144Hz)[cite: 1]
         this._processPendingInputs();
 
         const state = window.Game.state;
@@ -1362,7 +1529,7 @@ window.Game.Controls = {
             state.timeShiftCooldown = Math.max(0, state.timeShiftCooldown - dt);
         }
 
-        // 2. Dynamic Angular Lerp cho các nút đang kéo ngắm
+        // 2. Dynamic Angular Lerp cho các nút đang kéo ngắm[cite: 1]
         const lerpFactor = 1.0 - Math.exp(-dt * 26);
         for (let k in this.buttons) {
             const btn = this.buttons[k];
@@ -1371,7 +1538,7 @@ window.Game.Controls = {
             }
         }
 
-        // 3. Theo dõi CD và kích hoạt Hiệu ứng Lóe Sáng (Ready Flash Ring)
+        // 3. Theo dõi CD và kích hoạt Hiệu ứng Lóe Sáng (Ready Flash Rings) + Haptic[cite: 1]
         const combatSkills = (window.Game.Combat && typeof window.Game.Combat.getActiveSkills === 'function')
             ? window.Game.Combat.getActiveSkills()
             : (window.Game.Combat && window.Game.Combat.skills) || [];
@@ -1384,7 +1551,7 @@ window.Game.Controls = {
             if (flashState.prevCd > 0.05 && currentCd <= 0.01) {
                 flashState.flashAlpha = 1.0;
                 flashState.flashTimer = 0.45;
-                if (i > 0) this._vibrate(8);
+                if (i > 0) this.HapticEngine.vibrate(8);
             }
             flashState.prevCd = currentCd;
 
@@ -1393,7 +1560,7 @@ window.Game.Controls = {
             }
         }
 
-        // 4. XỬ LÝ INPUT BUFFERING: Tự kích hoạt khi kỹ năng hồi xong trong 150ms
+        // 4. XỬ LÝ INPUT BUFFERING: Tự kích hoạt khi kỹ năng hồi xong trong 150ms[cite: 1]
         if (this.inputBuffer.skillIndex !== null) {
             if (nowMs > this.inputBuffer.expireTime) {
                 this.inputBuffer.skillIndex = null;
@@ -1411,7 +1578,7 @@ window.Game.Controls = {
             }
         }
 
-        // 5. Cơ Chế Giữ Nút Đánh Liên Thanh (Hold-to-Fire / Auto-Combo)
+        // 5. Cơ Chế Giữ Nút Đánh Liên Thanh (Hold-to-Fire / Auto-Combo)[cite: 1]
         if (this.autoFireTracker.attack.isHolding && !this.isControlLocked()) {
             const atkSkill = combatSkills[0];
             const isAtkReady = !atkSkill || (atkSkill.cd <= 0.03);
@@ -1445,7 +1612,7 @@ window.Game.Controls = {
             }
         }
 
-        // 6. Cập nhật các gợn sóng xúc giác HUD (Ripples)
+        // 6. Cập nhật các gợn sóng xúc giác HUD (Ripples)[cite: 1]
         for (let i = this.ripples.length - 1; i >= 0; i--) {
             const rp = this.ripples[i];
             rp.r += (rp.maxR - rp.r) * Math.min(1, dt * 14);
@@ -1503,7 +1670,7 @@ window.Game.Controls = {
     },
 
     // =========================================================================
-    // TIA ĐỊNH HƯỚNG CHUẨN MOBA/ARPG & RADAR KHÓA MỤC TIÊU (AIM TRAJECTORY)
+    // 2. HIỂN THỊ KÍNH HỒNG NGOẠI (SNIPER SCOPE) & KHU VỰC KHÔNG TRỌNG LỰC
     // =========================================================================
     drawAimTrajectory: function (ctx, camera) {
         const player = window.Game.player;
@@ -1543,8 +1710,39 @@ window.Game.Controls = {
         const isOverheating = (aimConfig.type === 'LASER' && weaponHeat >= 60);
         const now = performance.now() * 0.001;
 
+        // KIỂM TRA TRANG BỊ SNIPER SCOPE (I.7) HOẶC ĐỨNG TRONG ZERO-GRAVITY ZONE (IV.9)
+        const hasSniperScope = !!(
+            (player.relics && (player.relics.has('relic_sniper_scope') || player.relics.relic_sniper_scope)) ||
+            (window.Game.state && window.Game.state.hasSniperScope)
+        );
+
+        let isInZeroGravity = false;
+        if (window.Game.World && typeof window.Game.World.getTerrainEffectAt === 'function') {
+            const effect = window.Game.World.getTerrainEffectAt(player.x, player.y);
+            isInZeroGravity = (effect === 'ZERO_GRAVITY' || effect === 'zero_gravity');
+        } else if (player.inZeroGravity || (window.Game.state && window.Game.state.inZeroGravity)) {
+            isInZeroGravity = true;
+        }
+
+        const isBoostedAim = hasSniperScope || isInZeroGravity;
+
+        // Tăng +40% độ dài tầm ngắm khi có Sniper Scope hoặc trong Không Trọng Lực
+        let maxRangeWorld = aimConfig.range || 420;
+        if (isBoostedAim) {
+            maxRangeWorld *= 1.40;
+        }
+
+        // Mở rộng phễu ngắm Laser từ ±15° lên ±26°
+        const baseConeHalfAngle = (aimConfig.coneHalfAngle || 15) * (Math.PI / 180);
+        const coneHalfAngle = isBoostedAim ? baseConeHalfAngle * 1.73 : baseConeHalfAngle;
+
         let mainColor = isCanceled ? '#ef4444' : (aimConfig.color || '#00f2fe');
         let glowColor = isCanceled ? '#dc2626' : (aimConfig.glow || '#38bdf8');
+
+        if (isBoostedAim && !isCanceled) {
+            mainColor = hasSniperScope ? '#ff2a6d' : '#05d9e8';
+            glowColor = hasSniperScope ? '#ff0055' : '#00f2fe';
+        }
 
         if (isOverheating && !isCanceled) {
             const flash = Math.sin(now * 12) > 0;
@@ -1552,7 +1750,6 @@ window.Game.Controls = {
             glowColor = '#ff0033';
         }
 
-        const maxRangeWorld = aimConfig.range || 420;
         const targetDist = maxRangeWorld * distRatio * zoom;
         const targetX = px + Math.cos(angle) * targetDist;
         const targetY = py + Math.sin(angle) * targetDist;
@@ -1562,23 +1759,43 @@ window.Game.Controls = {
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
 
-        // 1. Khung Nón Hỗ Trợ Ngắm Nhỏ (±15°)
+        // 1. Phễu Hỗ Trợ Ngắm (Aim Cone) - Tự động nở rộng nếu có Kính Hồng Ngoại / Vùng Không Trọng Lực
         if (aimConfig.type === 'LASER' || aimConfig.type === 'CANNON_AOE' || aimConfig.type === 'LINE') {
-            const coneHalfAngle = 15 * (Math.PI / 180);
             ctx.beginPath();
             ctx.moveTo(px, py);
             ctx.arc(px, py, targetDist, angle - coneHalfAngle, angle + coneHalfAngle);
             ctx.closePath();
+
             ctx.fillStyle = isCanceled
                 ? 'rgba(239, 68, 68, 0.05)'
-                : (isOverheating ? 'rgba(249, 115, 22, 0.08)' : 'rgba(0, 242, 254, 0.06)');
+                : (isOverheating
+                    ? 'rgba(249, 115, 22, 0.08)'
+                    : (isBoostedAim ? (hasSniperScope ? 'rgba(255, 42, 109, 0.12)' : 'rgba(5, 217, 232, 0.10)') : 'rgba(0, 242, 254, 0.06)'));
             ctx.fill();
 
-            ctx.lineWidth = 1;
+            ctx.lineWidth = isBoostedAim ? 2 : 1;
             ctx.strokeStyle = isCanceled
                 ? 'rgba(239, 68, 68, 0.25)'
-                : (isOverheating ? 'rgba(249, 115, 22, 0.35)' : 'rgba(0, 242, 254, 0.22)');
+                : (isOverheating
+                    ? 'rgba(249, 115, 22, 0.35)'
+                    : (isBoostedAim ? (hasSniperScope ? 'rgba(255, 42, 109, 0.45)' : 'rgba(5, 217, 232, 0.40)') : 'rgba(0, 242, 254, 0.22)'));
             ctx.stroke();
+
+            // Hiển thị huy hiệu chỉ báo Kính Hồng Ngoại / Không Trọng Lực trên đường phễu
+            if (isBoostedAim && !isCanceled) {
+                ctx.save();
+                ctx.font = `bold ${Math.round(10 * this.uiScale)}px sans-serif`;
+                ctx.fillStyle = hasSniperScope ? '#ff2a6d' : '#05d9e8';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                const tagText = hasSniperScope ? '🔭 KÍNH HỒNG NGOẠI (+40% TẦM)' : '🌌 KHÔNG TRỌNG LỰC (+40% TẦM)';
+                const tagX = px + Math.cos(angle) * (targetDist * 0.5);
+                const tagY = py + Math.sin(angle) * (targetDist * 0.5) - 8 * this.uiScale;
+                ctx.shadowColor = '#000000';
+                ctx.shadowBlur = 4;
+                ctx.fillText(tagText, tagX, tagY);
+                ctx.restore();
+            }
         }
 
         // 2. Vòng tròn định vị dưới chân nhân vật
@@ -1590,10 +1807,10 @@ window.Game.Controls = {
         ctx.stroke();
         ctx.globalAlpha = 1.0;
 
-        // 3. Đường quỹ đạo ngắm chính
+        // 3. Quỹ đạo ngắm chính
         if (aimConfig.type === 'CANNON_AOE') {
             const midX = (px + targetX) * 0.5;
-            const midY = (py + targetY) * 0.5 - 45 * zoom;
+            const midY = (py + targetY) * 0.5 - (isBoostedAim ? 65 : 45) * zoom;
 
             ctx.setLineDash([8, 6]);
             ctx.lineDashOffset = -(now * 30) % 14;
@@ -1608,15 +1825,15 @@ window.Game.Controls = {
             ctx.stroke();
             ctx.setLineDash([]);
 
-            const aoeR = (aimConfig.aoeRadius || 100) * zoom;
+            const aoeR = (aimConfig.aoeRadius || 100) * (isBoostedAim ? 1.15 : 1.0) * zoom;
             const sweetSpotR = aoeR * 0.40;
 
             ctx.beginPath();
             ctx.arc(targetX, targetY, aoeR, 0, Math.PI * 2);
-            ctx.fillStyle = isCanceled ? 'rgba(239, 68, 68, 0.12)' : 'rgba(0, 242, 254, 0.12)';
+            ctx.fillStyle = isCanceled ? 'rgba(239, 68, 68, 0.12)' : (isBoostedAim ? 'rgba(255, 42, 109, 0.16)' : 'rgba(0, 242, 254, 0.12)');
             ctx.fill();
             ctx.lineWidth = 1.8 * this.uiScale;
-            ctx.strokeStyle = isCanceled ? '#ef4444' : 'rgba(0, 242, 254, 0.7)';
+            ctx.strokeStyle = isCanceled ? '#ef4444' : (isBoostedAim ? '#ff2a6d' : 'rgba(0, 242, 254, 0.7)');
             ctx.stroke();
 
             ctx.beginPath();
@@ -1635,7 +1852,7 @@ window.Game.Controls = {
             ctx.fill();
 
         } else if (aimConfig.type === 'LASER') {
-            const beamW = (aimConfig.beamWidth || 20) * 0.5 * zoom;
+            const beamW = (aimConfig.beamWidth || 20) * 0.5 * (isBoostedAim ? 1.25 : 1.0) * zoom;
             const perpX = Math.cos(angle + Math.PI / 2) * beamW;
             const perpY = Math.sin(angle + Math.PI / 2) * beamW;
 
@@ -1648,7 +1865,9 @@ window.Game.Controls = {
 
             ctx.fillStyle = isCanceled
                 ? 'rgba(239, 68, 68, 0.15)'
-                : (isOverheating ? 'rgba(239, 68, 68, 0.25)' : 'rgba(0, 242, 254, 0.16)');
+                : (isOverheating
+                    ? 'rgba(239, 68, 68, 0.25)'
+                    : (isBoostedAim ? 'rgba(255, 42, 109, 0.22)' : 'rgba(0, 242, 254, 0.16)'));
             ctx.fill();
 
             ctx.lineWidth = 1.8 * this.uiScale;
@@ -1659,9 +1878,9 @@ window.Game.Controls = {
             ctx.setLineDash([12, 8]);
             ctx.lineDashOffset = dashOffset;
             ctx.strokeStyle = isOverheating ? '#fef08a' : '#ffffff';
-            ctx.lineWidth = 2.2 * this.uiScale;
+            ctx.lineWidth = (isBoostedAim ? 3.0 : 2.2) * this.uiScale;
             ctx.shadowColor = glowColor;
-            ctx.shadowBlur = 12;
+            ctx.shadowBlur = isBoostedAim ? 16 : 12;
 
             ctx.beginPath();
             ctx.moveTo(px, py);
@@ -1707,13 +1926,13 @@ window.Game.Controls = {
             }
         }
 
-        // 4. RADAR KHÓA MỤC TIÊU TRONG NÓN ±15°
-        this._drawLockOnReticle(ctx, px, py, angle, maxRangeWorld, camX, camY, zoom, now);
+        // 4. RADAR KHÓA MỤC TIÊU TRONG PHỄU NGẮM
+        this._drawLockOnReticle(ctx, px, py, angle, maxRangeWorld, camX, camY, zoom, now, coneHalfAngle);
 
         ctx.restore();
     },
 
-    _drawLockOnReticle: function (ctx, playerScreenX, playerScreenY, aimAngle, maxRangeWorld, camX, camY, zoom, now) {
+    _drawLockOnReticle: function (ctx, playerScreenX, playerScreenY, aimAngle, maxRangeWorld, camX, camY, zoom, now, customConeAngle) {
         if (!window.Game.Enemies || typeof window.Game.Enemies.getActiveList !== 'function') return;
 
         const enemies = window.Game.Enemies.getActiveList();
@@ -1722,7 +1941,7 @@ window.Game.Controls = {
         const player = window.Game.player;
         if (!player) return;
 
-        const coneHalfRad = 15 * (Math.PI / 180);
+        const coneHalfRad = customConeAngle || 15 * (Math.PI / 180);
         let bestTarget = null;
         let minScore = Infinity;
 
@@ -1801,7 +2020,7 @@ window.Game.Controls = {
     },
 
     // =========================================================================
-    // VẼ TOÀN BỘ GIAO DIỆN HUD (DRAW UI)
+    // VẼ TOÀN BỘ GIAO DIỆN HUD CẢM ỨNG (DRAW UI)
     // =========================================================================
     drawUI: function (ctx, width, height, camera) {
         const w = width || (ctx.canvas && ctx.canvas.width) || window.innerWidth;
@@ -1938,7 +2157,7 @@ window.Game.Controls = {
         const centerX = width * 0.5;
         const topY = Math.max(16, 20 * (this.uiScale || 1.0));
 
-        const panelW = Math.min(width - 24, 420);
+        const panelW = Math.min(width - 20, 480);
         const panelH = 92;
         const panelX = centerX - panelW / 2;
 
@@ -1952,8 +2171,9 @@ window.Game.Controls = {
         ctx.font = 'bold 13px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('⚙️ TÙY CHỈNH VỊ TRÍ NÚT: Chạm & Kéo nút bất kỳ', centerX, topY + 22);
+        ctx.fillText('⚙️ TÙY CHỈNH HUD & XÚC GIÁC: Chạm & Kéo nút để chỉnh vị trí', centerX, topY + 20);
 
+        // Nút Lưu
         const sRect = this.editToolbarRects.save;
         ctx.fillStyle = '#10b981';
         ctx.fillRect(sRect.x, sRect.y, sRect.w, sRect.h);
@@ -1961,9 +2181,10 @@ window.Game.Controls = {
         ctx.lineWidth = 1.5;
         ctx.strokeRect(sRect.x, sRect.y, sRect.w, sRect.h);
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 12px sans-serif';
+        ctx.font = 'bold 11px sans-serif';
         ctx.fillText('💾 LƯU LẠI', sRect.x + sRect.w / 2, sRect.y + sRect.h / 2);
 
+        // Nút Mặc định
         const rRect = this.editToolbarRects.reset;
         ctx.fillStyle = '#3b82f6';
         ctx.fillRect(rRect.x, rRect.y, rRect.w, rRect.h);
@@ -1972,6 +2193,17 @@ window.Game.Controls = {
         ctx.fillStyle = '#ffffff';
         ctx.fillText('🔄 MẶC ĐỊNH', rRect.x + rRect.w / 2, rRect.y + rRect.h / 2);
 
+        // NÚT BẬT / TẮT RUNG XÚC GIÁC (HAPTIC TOGGLE)
+        const hRect = this.editToolbarRects.haptic;
+        const isHapticOn = this.HapticEngine.isEnabled();
+        ctx.fillStyle = isHapticOn ? '#8b5cf6' : '#475569';
+        ctx.fillRect(hRect.x, hRect.y, hRect.w, hRect.h);
+        ctx.strokeStyle = isHapticOn ? '#c4b5fd' : '#94a3b8';
+        ctx.strokeRect(hRect.x, hRect.y, hRect.w, hRect.h);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(isHapticOn ? '📳 RUNG: BẬT' : '📴 RUNG: TẮT', hRect.x + hRect.w / 2, hRect.y + hRect.h / 2);
+
+        // Nút Thoát
         const cRect = this.editToolbarRects.cancel;
         ctx.fillStyle = '#ef4444';
         ctx.fillRect(cRect.x, cRect.y, cRect.w, cRect.h);
@@ -1980,6 +2212,7 @@ window.Game.Controls = {
         ctx.fillStyle = '#ffffff';
         ctx.fillText('✕ THOÁT', cRect.x + cRect.w / 2, cRect.y + cRect.h / 2);
 
+        // Vòng viền hiển thị trạng thái kéo thả nút
         for (let k in this.buttons) {
             const b = this.buttons[k];
             const isDragging = this.draggingHudKey === k;
@@ -2194,6 +2427,9 @@ window.Game.Controls = {
         ctx.restore();
     },
 
+    // =========================================================================
+    // 3. VẼ KỸ NĂNG VỚI MULTI-DASH (2 LẦN LƯỚT) & GIẢM HỒI CHIÊU HASTE MATRIX
+    // =========================================================================
     _drawSkillButton: function (ctx, btn, skillData, skillIndex) {
         const name = (skillData && skillData.name) || 'Kỹ năng';
         const cd = Math.max(0, (skillData && skillData.cd) || 0);
@@ -2201,6 +2437,23 @@ window.Game.Controls = {
         const color = (skillData && skillData.color) || '#38bdf8';
         const isOnCooldown = cd > 0.01;
         const uiScale = this.uiScale || 1.0;
+
+        const player = window.Game.player;
+
+        // KIỂM TRA TRANG BỊ MA TRẬN GIA TỐC HASTE MATRIX (-20% CD)
+        const hasHasteMatrix = !!(
+            (player && player.relics && (player.relics.has('relic_haste_matrix') || player.relics.relic_haste_matrix)) ||
+            (window.Game.state && window.Game.state.hasHasteMatrix)
+        );
+
+        // KIỂM TRA SỐ TẦNG TÍCH LŨY CỦA KỸ NĂNG LƯỚT (MULTI-DASH CHARGES - SKILL 1)
+        const isDashSkill = (skillIndex === 1);
+        const dashCharges = (isDashSkill && window.Game.Combat && typeof window.Game.Combat.dashCharges === 'number')
+            ? window.Game.Combat.dashCharges
+            : (player && player.dashCharges !== undefined ? player.dashCharges : (isDashSkill ? 1 : 0));
+        const maxDashCharges = (isDashSkill && window.Game.Combat && typeof window.Game.Combat.maxDashCharges === 'number')
+            ? window.Game.Combat.maxDashCharges
+            : 2;
 
         const scale = btn.pressed ? 0.91 : 1.0;
         const r = btn.r * scale;
@@ -2249,6 +2502,18 @@ window.Game.Controls = {
         ctx.strokeStyle = isOnCooldown ? 'rgba(148, 163, 184, 0.5)' : (btn.pressed ? '#fde047' : '#f8fafc');
         ctx.stroke();
 
+        // HIỂN THỊ VIỀN CHỈ BÁO GIẢM HỒI CHIÊU HASTE MATRIX (-20% CD)
+        if (hasHasteMatrix) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(btn.x, btn.y, r + 2.5 * uiScale, 0, Math.PI * 2);
+            ctx.lineWidth = 1.8 * uiScale;
+            ctx.strokeStyle = 'rgba(168, 85, 247, 0.75)';
+            ctx.setLineDash([4, 3]);
+            ctx.stroke();
+            ctx.restore();
+        }
+
         ctx.fillStyle = '#ffffff';
         ctx.font = `bold ${Math.round(9.5 * uiScale)}px sans-serif`;
         ctx.textAlign = 'center';
@@ -2274,14 +2539,56 @@ window.Game.Controls = {
             ctx.fillText(cdText, btn.x, btn.y + 5 * uiScale);
         }
 
+        // VẼ CÁC CHẤM SÁNG CHỈ BÁO SỐ LẦN TÍCH LŨY CỦA TỐC BIẾN ĐA TẦNG (MULTI-DASH CHARGES)
+        if (isDashSkill) {
+            const dotRadius = 3.5 * uiScale;
+            const startDotX = btn.x - ((maxDashCharges - 1) * 11 * uiScale) / 2;
+            const dotY = btn.y + r - 8 * uiScale;
+
+            for (let d = 0; d < maxDashCharges; d++) {
+                const curDotX = startDotX + d * 11 * uiScale;
+                const isCharged = d < dashCharges;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(curDotX, dotY, dotRadius, 0, Math.PI * 2);
+                ctx.fillStyle = isCharged ? '#00f2fe' : 'rgba(100, 116, 139, 0.6)';
+                ctx.shadowColor = isCharged ? '#00f2fe' : 'transparent';
+                ctx.shadowBlur = isCharged ? 6 : 0;
+                ctx.fill();
+
+                ctx.strokeStyle = isCharged ? '#ffffff' : '#475569';
+                ctx.lineWidth = 1 * uiScale;
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
         this._drawKeyBadge(ctx, btn, r);
         ctx.restore();
     },
 
+    // =========================================================================
+    // 4. VẼ CHIÊU CUỐI NỘ LƯỢNG TỬ (QUANTUM BATTERY 200 NỘ VỚI VÒNG KÉP)
+    // =========================================================================
     _drawRageSkillButton: function (ctx, btn, skillData) {
-        const rage = Math.max(0, Math.min(100, (window.Game.state && window.Game.state.rage) || 0));
-        const rageRatio = rage / 100;
-        const isReady = rage >= 100;
+        const player = window.Game.player;
+
+        // KIỂM TRA TRANG BỊ BỘ LƯU TRỮ LƯỢNG TỬ (QUANTUM BATTERY - MAX 200 NỘ)
+        const hasQuantumBattery = !!(
+            (player && player.relics && (player.relics.has('relic_quantum_battery') || player.relics.relic_quantum_battery)) ||
+            (window.Game.state && window.Game.state.hasQuantumBattery)
+        );
+
+        const maxRageAllowed = hasQuantumBattery ? 200 : 100;
+        const rage = Math.max(0, Math.min(maxRageAllowed, (window.Game.state && window.Game.state.rage) || 0));
+
+        const tier1Ratio = Math.min(1.0, rage / 100);
+        const tier2Ratio = hasQuantumBattery ? Math.max(0.0, (rage - 100) / 100) : 0;
+
+        const isReady1 = rage >= 100;
+        const isReady2 = hasQuantumBattery && rage >= 200;
+
         const uiScale = this.uiScale || 1.0;
         const scale = btn.pressed ? 0.91 : 1.0;
         const r = btn.r * scale;
@@ -2289,14 +2596,15 @@ window.Game.Controls = {
 
         ctx.save();
 
-        if (isReady || btn.pressed) {
-            const pulseR = r + 5 * uiScale + Math.sin(now * 8) * 3.5 * uiScale;
+        // Xung nhịp tỏa sáng khi đầy Chiêu Cuối (Pulse Aura)
+        if (isReady1 || btn.pressed) {
+            const pulseR = r + 5 * uiScale + Math.sin(now * (isReady2 ? 14 : 8)) * (isReady2 ? 5.0 : 3.5) * uiScale;
             ctx.beginPath();
             ctx.arc(btn.x, btn.y, pulseR, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(34, 211, 238, 0.95)';
-            ctx.shadowColor = '#00f2fe';
-            ctx.shadowBlur = 14 * uiScale;
-            ctx.lineWidth = 3.5 * uiScale;
+            ctx.strokeStyle = isReady2 ? 'rgba(236, 72, 153, 0.95)' : 'rgba(34, 211, 238, 0.95)';
+            ctx.shadowColor = isReady2 ? '#ff007f' : '#00f2fe';
+            ctx.shadowBlur = (isReady2 ? 18 : 14) * uiScale;
+            ctx.lineWidth = (isReady2 ? 4.5 : 3.5) * uiScale;
             ctx.stroke();
             ctx.shadowBlur = 0;
         }
@@ -2306,33 +2614,72 @@ window.Game.Controls = {
         ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
         ctx.fill();
 
-        if (rageRatio > 0) {
+        // TẦNG NỘ 1: Vòng tròn năng lượng bên trong (0% - 100%)
+        if (tier1Ratio > 0) {
             const startAngle = -Math.PI / 2;
-            const endAngle = startAngle + rageRatio * Math.PI * 2;
+            const endAngle = startAngle + tier1Ratio * Math.PI * 2;
             ctx.beginPath();
             ctx.moveTo(btn.x, btn.y);
             ctx.arc(btn.x, btn.y, r - 3 * uiScale, startAngle, endAngle, false);
             ctx.closePath();
-            ctx.fillStyle = isReady ? '#06b6d4' : 'rgba(245, 158, 11, 0.65)';
+            ctx.fillStyle = isReady1 ? (hasQuantumBattery ? '#0284c7' : '#06b6d4') : 'rgba(245, 158, 11, 0.65)';
             ctx.fill();
+        }
+
+        // TẦNG NỘ 2: VÒNG NĂNG LƯỢNG KÉP KHI CÓ QUANTUM BATTERY (100% - 200%)
+        if (hasQuantumBattery && tier2Ratio > 0) {
+            const startAngle2 = -Math.PI / 2;
+            const endAngle2 = startAngle2 + tier2Ratio * Math.PI * 2;
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(btn.x, btn.y, r + 4 * uiScale, startAngle2, endAngle2);
+            ctx.strokeStyle = isReady2 ? '#f43f5e' : '#ec4899';
+            ctx.lineWidth = 3.5 * uiScale;
+            ctx.shadowColor = '#f43f5e';
+            ctx.shadowBlur = 10 * uiScale;
+            ctx.stroke();
+            ctx.restore();
         }
 
         ctx.beginPath();
         ctx.arc(btn.x, btn.y, r, 0, Math.PI * 2);
-        ctx.lineWidth = (isReady ? 3 : 2) * uiScale;
-        ctx.strokeStyle = isReady ? '#a5f3fc' : 'rgba(148, 163, 184, 0.55)';
+        ctx.lineWidth = (isReady1 ? 3 : 2) * uiScale;
+        ctx.strokeStyle = isReady2 ? '#fda4af' : (isReady1 ? '#a5f3fc' : 'rgba(148, 163, 184, 0.55)');
         ctx.stroke();
 
-        ctx.fillStyle = isReady ? '#ffffff' : '#e2e8f0';
+        ctx.fillStyle = isReady1 ? '#ffffff' : '#e2e8f0';
         ctx.font = `bold ${Math.round(9 * uiScale)}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const title = (skillData && skillData.name) || 'NGƯNG ĐỌNG';
         ctx.fillText(title.substring(0, 10), btn.x, btn.y - 7 * uiScale);
 
-        ctx.fillStyle = isReady ? '#fde047' : '#38bdf8';
-        ctx.font = `bold ${Math.round(11 * uiScale)}px sans-serif`;
-        ctx.fillText(isReady ? 'MAX NỘ!' : `${Math.floor(rage)}%`, btn.x, btn.y + 7 * uiScale);
+        // HIỂN THỊ CHỈ BÁO NĂNG LƯỢNG NỘ: x1 READY hoặc x2 MAX!
+        let rageLabel = `${Math.floor(rage)}%`;
+        let rageColor = '#38bdf8';
+
+        if (hasQuantumBattery) {
+            if (isReady2) {
+                rageLabel = 'x2 MAX!';
+                rageColor = '#fda4af';
+            } else if (isReady1) {
+                rageLabel = `x1 READY (${Math.floor(rage)}%)`;
+                rageColor = '#fde047';
+            } else {
+                rageLabel = `${Math.floor(rage)}/200`;
+                rageColor = '#38bdf8';
+            }
+        } else {
+            if (isReady1) {
+                rageLabel = 'MAX NỘ!';
+                rageColor = '#fde047';
+            }
+        }
+
+        ctx.fillStyle = rageColor;
+        ctx.font = `bold ${Math.round(hasQuantumBattery && isReady1 ? 9.5 * uiScale : 11 * uiScale)}px sans-serif`;
+        ctx.fillText(rageLabel, btn.x, btn.y + 7 * uiScale);
 
         this._drawKeyBadge(ctx, btn, r);
         ctx.restore();
@@ -2496,6 +2843,7 @@ window.Game.Controls = {
         else if (nearby === 'SOIL') label = 'TRỒNG CÂY';
         else if (typeof nearby === 'string' && nearby.indexOf('CHEST') !== -1) label = 'MỞ RƯƠNG';
         else if (typeof nearby === 'string' && nearby.indexOf('WAYPOINT') !== -1) label = 'DỊCH CHUYỂN';
+        else if (typeof nearby === 'string' && nearby.indexOf('SHRINE') !== -1) label = 'HIẾN TẾ ĐỀN';
 
         ctx.fillText(label, btn.x, btn.y - 4 * uiScale);
         ctx.font = `bold ${Math.round(8 * uiScale)}px sans-serif`;

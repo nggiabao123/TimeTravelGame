@@ -1,24 +1,21 @@
 /**
- * FILE: enemies.js
- * BẢN NÂNG CẤP SIÊU CẤP HỆ THỐNG AI CHIẾN THUẬT, ANTI-SNIPER & 3 MINI-BOSS KỶ NGUYÊN:
- * 1. 3 BOSS PHỤ KỶ NGUYÊN (isMiniBoss: true) HOÀN THIỆN NHIỆM VỤ #4:
- *    - PAST (1620, 1740): [BOSS PHỤ] Cự Thạch Hộ Pháp (ancient_miniboss, 2400 HP, R:34)
- *      + Giậm đất tạo 3 vòng sóng chấn động liên hoàn & dựng Giáp Đá giảm 60% sát thương tầm xa.
- *    - PRESENT (2220, 1740): [BOSS PHỤ] Mẫu Hoàng Độc Tố (mutant_miniboss, 2800 HP, R:34)
- *      + Bắn chùm 5 quả cầu axit độc & triệu hồi 2 quái tự bạo nhỏ mỗi 9 giây.
- *    - FUTURE (1920, 1720): [BOSS PHỤ] Chiến Giáp Phản Quang (robot_miniboss, 3200 HP, R:35)
- *      + Kích hoạt Khiên Gương Lượng Tử 3s mỗi 8s: Phản xạ tia laser về phía người chơi nếu bắn
- *        bằng laser_gun / chrono_cannon; bị phá vỡ ngay nếu người chơi áp sát chém cận chiến.
- * 2. AI KHẮC CHẾ ĐỨNG XA BẮN SÚNG (ANTI-SNIPER TACTICAL AI):
- *    - Evasive Sidestep: Quái isKiter / isElite tự động lướt ngang vuông góc 90° (x2.4 tốc độ,
- *      0.22s, hồi 3.2s) kèm vệt bóng mờ khi bị ngắm bởi laser_gun / chrono_cannon (< 20°, 180-450px).
- *    - Khiên Tanker nâng cấp: Chặn 88% sát thương từ xa (> 210px) và nảy mảnh vỡ phản kích;
- *      nhận thêm +25% sát thương nếu bị áp sát (< 130px) hoặc đánh sau lưng.
- * 3. ĐỘI HÌNH LIÊN KẾT CHIẾN THUẬT (TACTICAL SYNERGY):
- *    - Quái isKiter khi mất máu ưu tiên lùi về nấp sau lưng đồng đội isTanker gần đó.
- * 4. VẬT PHẨM RƠI MỚI: OVERDRIVE_ORB (Ngọc Cuồng Nộ Đỏ Cam - 6% quái thường, 100% Mini-Boss):
- *    - Tăng +25 Nộ, làm mát tức thì weaponHeat = 0 và tăng +20% tốc độ đánh trong 4 giây.
- * 5. ĐỒ HỌA CANVAS MINI-BOSS & HIỆU ỨNG CHIẾN ĐẤU ĐẦY ĐỦ.
+ * ============================================================================
+ * FILE: enemies.js (Phần 1 / 2)
+ * HỆ THỐNG QUẢN LÝ QUÁI VẬT, MINI-BOSS, CHÚA TỂ THỜI KHÔNG & AI TÁC CHIẾN TỰ ĐỘNG
+ * "KẺ DU HÀNH THỜI KHÔNG" - CHUẨN ENGINE ACTION RPG CANVAS 2D
+ * ============================================================================
+ * TÍCH HỢP ĐẦY ĐỦ CÁC CƠ CHẾ NÂNG CẤP & TƯƠNG TÁC ĐẶC BIỆT:
+ * 1. Nam Châm Hút Vật Phẩm (Loot Magnet - I.1): Nâng bán kính từ 120px lên tối đa 450px.
+ * 2. Ngọc Nhân Đôi Thu Hoạch (Greed Relic - I.2): 25% x2 Vàng & EXP khi hạ quái hoặc nhặt Orb.
+ * 3. Hiệu ứng Vệt Lửa Giày Lướt Phản Lực (Aero Boots - I.3): Đốt cháy & làm chậm 40% quái giẫm vào.
+ * 4. Trái Tim Băng Giá (Frost Heart - I.5): Sóng băng đóng băng quái xung quanh 2.0s (Hồi 12s).
+ * 5. Mặt Dây Chuyền Bất Khuất (Last Stand Pendant - I.6): Khiên ảo 50% HP khi máu dưới 25% (Hồi 60s).
+ * 6. Kính Hồng Ngoại Cảnh Báo (Sniper Scope - I.7): Báo trước quỹ đạo ngắm bắn của quái trước 0.65s.
+ * 7. Chém Xuyên Giáp (Armor Piercing - II.7) & Bùng Nổ Tro Tàn (Corpse Explosion - II.9):
+ *    - Cận chiến xuyên 50% hiệu ứng cản khiên Tanker.
+ *    - Xác quái chết bùng nổ gây 15% HP tối đa trong bán kính 130px.
+ * 8. Vùng Đất Bị Nguyền (Cursed Grounds - IV.10): +50% EXP diệt quái, giảm 50% thời gian hồi sinh.
+ * 9. Chế Độ Đồ Họa 120Hz/Siêu Mượt (Ultra Performance Toggle - V.8): Tối ưu hóa render loại bỏ aura nặng.
  */
 
 window.Game = window.Game || {};
@@ -30,13 +27,21 @@ window.Game.Enemies = {
     telegraphs: [],
     healWaves: [],
     healLinks: [],
-    shieldDeflections: [], // Hiệu ứng tia lửa / lục giác khiên nảy bật
-    evadeAfterimages: [],  // Vệt bóng mờ khi quái lướt né tia ngắm hoặc phản xạ laser
-    queuedWaveRings: [],   // Hàng đợi sóng chấn động liên hoàn của Cự Thạch Hộ Pháp
+    shieldDeflections: [],
+    evadeAfterimages: [],
+    queuedWaveRings: [],
+    corpseExplosions: [],
+
+    // Trạng thái hiệu ứng người chơi
     playerSlowTimer: 0,
     _appliedPlayerSlow: 0,
     playerOverdriveTimer: 0,
+    frostHeartCooldown: 0,
+    lastStandCooldown: 0,
 
+    /**
+     * KHỞI TẠO TẬP HỢP TOÀN BỘ ENEMY LIST CHO 3 KỶ NGUYÊN & BOSS
+     */
     init: function () {
         this.list = [];
         this.projectiles = [];
@@ -47,8 +52,13 @@ window.Game.Enemies = {
         this.shieldDeflections = [];
         this.evadeAfterimages = [];
         this.queuedWaveRings = [];
-        this._clearPlayerSlow();
-        this._clearPlayerOverdrive();
+        this.corpseExplosions = [];
+
+        this.playerSlowTimer = 0;
+        this._appliedPlayerSlow = 0;
+        this.playerOverdriveTimer = 0;
+        this.frostHeartCooldown = 0;
+        this.lastStandCooldown = 0;
 
         if (window.Game.state) {
             if (typeof window.Game.state.loopLevel !== 'number') {
@@ -83,7 +93,7 @@ window.Game.Enemies = {
             { x: 2680, y: 2860 }
         ];
 
-        // 1. Quá Khứ (PAST) - 12 quái cổ đại phân hóa Tanker, Ranged và Melee
+        // 1. Quá Khứ (PAST) - 12 Quái Cổ Đại (Golem Tanker, Shaman Kiter, Goblin Cận Chiến)
         for (let i = 0; i < 12; i++) {
             const pt = this._findSafePosition(spawnCoords[i].x, spawnCoords[i].y);
             let subType = 'goblin';
@@ -97,22 +107,20 @@ window.Game.Enemies = {
             let baseExp = 24;
 
             if (i % 3 === 0) {
-                // TANKER / SHIELD-BEARER
                 subType = 'golem';
                 role = 'tanker';
                 name = 'Golem Đá Bọc Giáp';
-                baseHp = 300; // Gấp đôi quái thường
+                baseHp = 300;
                 baseSpeed = 82;
                 baseRadius = 26;
                 baseDamage = 26;
                 baseGold = 55;
                 baseExp = 36;
             } else if (i % 3 === 2) {
-                // RANGED / KITER
                 subType = 'shaman';
                 role = 'kiter';
                 name = 'Pháp Sư Cổ Đại';
-                baseHp = 78; // Máu giấy (giảm ~45%)
+                baseHp = 78;
                 baseSpeed = 126;
                 baseRadius = 18;
                 baseDamage = 20;
@@ -161,6 +169,10 @@ window.Game.Enemies = {
                 evadeVx: 0,
                 evadeVy: 0,
                 afterimageTick: 0,
+                freezeTimer: 0,
+                burnTimer: 0,
+                burnDps: 0,
+                burnTickTimer: 0,
                 hitFlash: 0,
                 lastHitTime: 0,
                 dead: false,
@@ -173,7 +185,7 @@ window.Game.Enemies = {
             this.list.push(enemy);
         }
 
-        // 2. Hiện Tại (PRESENT) - 12 quái đột biến Cận chiến & Tự bạo
+        // 2. Hiện Tại (PRESENT) - 12 Quái Đột Biến Cận Chiến & Tự Bạo
         for (let i = 0; i < 12; i++) {
             const offsetPt = spawnCoords[(i + 4) % 12];
             const pt = this._findSafePosition(offsetPt.x + 80, offsetPt.y - 70);
@@ -214,6 +226,10 @@ window.Game.Enemies = {
                 evadeVx: 0,
                 evadeVy: 0,
                 afterimageTick: 0,
+                freezeTimer: 0,
+                burnTimer: 0,
+                burnDps: 0,
+                burnTickTimer: 0,
                 hitFlash: 0,
                 lastHitTime: 0,
                 dead: false,
@@ -229,7 +245,7 @@ window.Game.Enemies = {
             this.list.push(enemy);
         }
 
-        // 3. Tương Lai (FUTURE) - 12 Robot phân hóa: Robot Hộ Vệ Khiên (Tanker) & Robot Bắn Tỉa (Kiter)
+        // 3. Tương Lai (FUTURE) - 12 Robot (Robot Hộ Vệ Khiên Tanker & Robot Bắn Tỉa Kiter)
         for (let i = 0; i < 12; i++) {
             const offsetPt = spawnCoords[(i + 8) % 12];
             const pt = this._findSafePosition(offsetPt.x - 70, offsetPt.y + 80);
@@ -239,7 +255,7 @@ window.Game.Enemies = {
             let subType = isTanker ? 'shield_robot' : 'sniper_robot';
             let role = isTanker ? 'tanker' : 'kiter';
             let name = isTanker ? 'Robot Hộ Vệ Khiên' : 'Robot Xạ Thủ Kiter';
-            let baseHp = isTanker ? 340 : 105; // Tanker máu x2; Kiter máu giấy
+            let baseHp = isTanker ? 340 : 105;
             let baseSpeed = isTanker ? 90 : 138;
             let baseRadius = isTanker ? 25 : 18;
             let baseDamage = isTanker ? 24 : 26;
@@ -278,7 +294,7 @@ window.Game.Enemies = {
                 expReward: baseExp,
                 attackCd: 0,
                 shootCd: 0.9 + (i % 4) * 0.35,
-                shieldActive: isTanker, // Tanker luôn dựng khiên
+                shieldActive: isTanker,
                 shieldTimer: 0,
                 shieldCd: 0,
                 strafeDir: i % 2 === 0 ? 1 : -1,
@@ -288,6 +304,10 @@ window.Game.Enemies = {
                 evadeVx: 0,
                 evadeVy: 0,
                 afterimageTick: 0,
+                freezeTimer: 0,
+                burnTimer: 0,
+                burnDps: 0,
+                burnTickTimer: 0,
                 hitFlash: 0,
                 lastHitTime: 0,
                 dead: false,
@@ -300,11 +320,11 @@ window.Game.Enemies = {
             this.list.push(enemy);
         }
 
-        // 4. KHỞI TẠO 3 BOSS PHỤ KỶ NGUYÊN (isMiniBoss: true) CHO NHIỆM VỤ #4
+        // 4. KHỞI TẠO 3 BOSS PHỤ KỶ NGUYÊN (isMiniBoss: true)
         const miniBossLoopMult = Math.pow(1.75, Math.max(0, loop - 1));
         const miniBossDmgMult = Math.pow(1.45, Math.max(0, loop - 1));
 
-        // 4A. Kỷ nguyên PAST (1620, 1740): [BOSS PHỤ] Cự Thạch Hộ Pháp
+        // 4A. PAST (1620, 1740): [BOSS PHỤ] Cự Thạch Hộ Pháp
         const pastMiniPt = this._findSafePosition(1620, 1740);
         const pastMiniHp = Math.round(2400 * miniBossLoopMult);
         this.list.push({
@@ -337,7 +357,7 @@ window.Game.Enemies = {
             goldReward: Math.round(380 * miniBossDmgMult),
             baseExpReward: 180,
             expReward: Math.round(180 * Math.pow(1.3, Math.max(0, loop - 1))),
-            stoneArmorActive: true, // Luôn dựng Giáp Đá giảm 60% sát thương tầm xa
+            stoneArmorActive: true,
             slamComboCd: 4.5,
             attackCd: 0,
             shootCd: 2.2,
@@ -346,6 +366,10 @@ window.Game.Enemies = {
             evadeVx: 0,
             evadeVy: 0,
             afterimageTick: 0,
+            freezeTimer: 0,
+            burnTimer: 0,
+            burnDps: 0,
+            burnTickTimer: 0,
             hitFlash: 0,
             lastHitTime: 0,
             dead: false,
@@ -354,7 +378,7 @@ window.Game.Enemies = {
             facingAngle: Math.PI / 2
         });
 
-        // 4B. Kỷ nguyên PRESENT (2220, 1740): [BOSS PHỤ] Mẫu Hoàng Độc Tố
+        // 4B. PRESENT (2220, 1740): [BOSS PHỤ] Mẫu Hoàng Độc Tố
         const presentMiniPt = this._findSafePosition(2220, 1740);
         const presentMiniHp = Math.round(2800 * miniBossLoopMult);
         this.list.push({
@@ -398,6 +422,10 @@ window.Game.Enemies = {
             evadeVx: 0,
             evadeVy: 0,
             afterimageTick: 0,
+            freezeTimer: 0,
+            burnTimer: 0,
+            burnDps: 0,
+            burnTickTimer: 0,
             hitFlash: 0,
             lastHitTime: 0,
             dead: false,
@@ -406,7 +434,7 @@ window.Game.Enemies = {
             facingAngle: Math.PI / 2
         });
 
-        // 4C. Kỷ nguyên FUTURE (1920, 1720): [BOSS PHỤ] Chiến Giáp Phản Quang
+        // 4C. FUTURE (1920, 1720): [BOSS PHỤ] Chiến Giáp Phản Quang
         const futureMiniPt = this._findSafePosition(1920, 1720);
         const futureMiniHp = Math.round(3200 * miniBossLoopMult);
         this.list.push({
@@ -441,7 +469,7 @@ window.Game.Enemies = {
             expReward: Math.round(220 * Math.pow(1.3, Math.max(0, loop - 1))),
             mirrorShieldActive: false,
             mirrorShieldTimer: 0,
-            mirrorShieldCd: 4.5, // Kích hoạt Khiên Gương 3s mỗi 8s
+            mirrorShieldCd: 4.5,
             stunTimer: 0,
             strafeDir: -1,
             strafeTimer: 1.8,
@@ -452,6 +480,10 @@ window.Game.Enemies = {
             evadeVx: 0,
             evadeVy: 0,
             afterimageTick: 0,
+            freezeTimer: 0,
+            burnTimer: 0,
+            burnDps: 0,
+            burnTickTimer: 0,
             hitFlash: 0,
             lastHitTime: 0,
             dead: false,
@@ -460,7 +492,7 @@ window.Game.Enemies = {
             facingAngle: Math.PI / 2
         });
 
-        // 5. Chúa Tể Thời Không (Boss Chính)
+        // 5. CHÚA TỂ THỜI KHÔNG (Boss Toàn Cục)
         this.list.push({
             id: 'chrono_boss',
             timeline: 'ALL',
@@ -511,6 +543,10 @@ window.Game.Enemies = {
             meteorCd: 4.5,
             timeWarpCd: 7.5,
             phase: 1,
+            freezeTimer: 0,
+            burnTimer: 0,
+            burnDps: 0,
+            burnTickTimer: 0,
             hitFlash: 0,
             lastHitTime: 0,
             dead: false,
@@ -593,6 +629,8 @@ window.Game.Enemies = {
         e.groundSlamCd = 0;
         e.evadeCd = 0;
         e.evadeTimer = 0;
+        e.freezeTimer = 0;
+        e.burnTimer = 0;
     },
 
     _applyPlayerSlow: function (duration) {
@@ -613,11 +651,6 @@ window.Game.Enemies = {
         this.playerSlowTimer = 0;
     },
 
-    /**
-     * KÍCH HOẠT HIỆU ỨNG OVERDRIVE KHI NHẶT NGỌC CUỒNG NỘ ĐỎ CAM (OVERDRIVE_ORB):
-     * - Tăng +25 Nộ, làm mát tức thì nhiệt độ súng (weaponHeat = 0)
-     * - Tăng +20% tốc độ đánh trong 4 giây
-     */
     _applyPlayerOverdrive: function (duration) {
         const player = window.Game.player;
         const state = window.Game.state;
@@ -668,9 +701,6 @@ window.Game.Enemies = {
         }
     },
 
-    /**
-     * TRIỆU HỒI 2 QUÁI TỰ BẠO NHỎ CỦA MẪU HOÀNG ĐỘC TỐ (PRESENT MINI-BOSS)
-     */
     _spawnMutantMinions: function (queen) {
         const activeMinions = this.list.filter(
             m => m.isSummonedMinion && !m.dead && m.hp > 0 && m.parentId === queen.id
@@ -727,6 +757,10 @@ window.Game.Enemies = {
                 evadeVx: 0,
                 evadeVy: 0,
                 afterimageTick: 0,
+                freezeTimer: 0,
+                burnTimer: 0,
+                burnDps: 0,
+                burnTickTimer: 0,
                 hitFlash: 0,
                 lastHitTime: 0,
                 dead: false,
@@ -776,6 +810,8 @@ window.Game.Enemies = {
                 e.hp = e.maxHp;
                 e.kamikazeActive = false;
                 e.kamikazeTimer = 0;
+                e.freezeTimer = 0;
+                e.burnTimer = 0;
                 if (e.isMiniBoss && e.subType === 'robot_miniboss') {
                     e.mirrorShieldActive = false;
                     e.mirrorShieldTimer = 0;
@@ -802,6 +838,7 @@ window.Game.Enemies = {
         this.shieldDeflections = [];
         this.evadeAfterimages = [];
         this.queuedWaveRings = [];
+        this.corpseExplosions = [];
         this._clearPlayerSlow();
         this._clearPlayerOverdrive();
 
@@ -866,6 +903,26 @@ window.Game.Enemies = {
         return active;
     },
 
+    /**
+     * KIỂM TRA NGƯỜI CHƠI CÓ ĐANG ĐỨNG TRONG VÙNG ĐẤT BỊ NGUYỀN (CURSED GROUNDS - IV.10)
+     */
+    _isPlayerInCursedGround: function () {
+        if (window.Game.World && typeof window.Game.World.isPlayerInCursedGround === 'function') {
+            return window.Game.World.isPlayerInCursedGround();
+        }
+        if (window.Game.state && typeof window.Game.state.inCursedGround === 'boolean') {
+            return window.Game.state.inCursedGround;
+        }
+        const player = window.Game.player;
+        if (player && typeof player.x === 'number' && typeof player.y === 'number') {
+            return player.x >= 2300 && player.x <= 2900 && player.y >= 2300 && player.y <= 2900;
+        }
+        return false;
+    },
+
+    /**
+     * XỬ LÝ SÁT THƯƠNG GÂY LÊN NGƯỜI CHƠI (TÍCH HỢP TRÁI TIM BĂNG GIÁ I.5 & MẶT DÂY CHUYỀN BẤT KHUẤT I.6)
+     */
     _applyDamageToPlayer: function (rawAmount, sourceEnemy) {
         const player = window.Game.player;
         const state = window.Game.state;
@@ -879,6 +936,9 @@ window.Game.Enemies = {
         }
 
         const dmg = Math.max(1, Math.round(rawAmount));
+        const maxHp = player.maxHp || 100;
+        const isHeavyHit = dmg >= maxHp * 0.20;
+
         player.shieldCooldown = 8.0;
 
         let remainingDmg = dmg;
@@ -899,6 +959,84 @@ window.Game.Enemies = {
 
         if (remainingDmg > 0) {
             player.hp = Math.max(0, (player.hp || 0) - remainingDmg);
+        }
+
+        // TÍNH NĂNG 4: TRÁI TIM BĂNG GIÁ (FROST HEART - I.5)
+        // Khi nhận đòn lớn (>= 20% maxHp) và có relic_frost_heart, hồi 12s -> đóng băng toàn bộ quái quanh 360px trong 2.0s
+        const equippedRelics = (state && Array.isArray(state.equippedRelics)) ? state.equippedRelics : [];
+        if (
+            isHeavyHit &&
+            equippedRelics.includes('relic_frost_heart') &&
+            this.frostHeartCooldown <= 0
+        ) {
+            this.frostHeartCooldown = 12.0;
+
+            this.healWaves.push({
+                x: player.x,
+                y: player.y,
+                radius: 20,
+                maxRadius: 360,
+                color: 'rgba(56, 189, 248, 0.95)',
+                alpha: 1.0
+            });
+
+            const currentTimeline = (state && state.timeline) || 'PRESENT';
+            for (let i = 0; i < this.list.length; i++) {
+                const e = this.list[i];
+                if (!e || e.dead || e.hp <= 0) continue;
+                if (!e.isBoss && e.timeline !== currentTimeline) continue;
+
+                const d = Math.hypot(e.x - player.x, e.y - player.y);
+                if (d <= 360) {
+                    e.freezeTimer = Math.max(e.freezeTimer || 0, 2.0);
+                    if (e.isBoss) {
+                        e.stunTimer = Math.max(e.stunTimer || 0, 1.0);
+                    }
+                }
+            }
+
+            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                window.Game.Combat.spawnFloatingText(
+                    player.x,
+                    player.y - 48,
+                    '❄️ TRÁI TIM BĂNG GIÁ: ĐÓNG BĂNG 2S!',
+                    '#38bdf8',
+                    true
+                );
+            }
+        }
+
+        // TÍNH NĂNG 5: MẶT DÂY CHUYỀN BẤT KHUẤT (LAST STAND PENDANT - I.6)
+        // Khi máu tụt < 25%, nếu trang bị relic_last_stand (hồi chiêu 60s), tạo khiên ảo 50% HP tối đa trong 5s
+        if (
+            player.hp > 0 &&
+            (player.hp / maxHp) < 0.25 &&
+            equippedRelics.includes('relic_last_stand') &&
+            this.lastStandCooldown <= 0
+        ) {
+            this.lastStandCooldown = 60.0;
+            const shieldGranted = Math.round(maxHp * 0.50);
+            player.shield = Math.max(player.shield || 0, shieldGranted);
+            player.lastStandShieldTimer = 5.0;
+
+            this.healWaves.push({
+                x: player.x,
+                y: player.y,
+                radius: 15,
+                maxRadius: 180,
+                color: 'rgba(234, 179, 8, 0.95)',
+                alpha: 1.0
+            });
+
+            if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                window.Game.Combat.spawnFloatingText(
+                    player.x,
+                    player.y - 56,
+                    `🛡️ BẤT KHUẤT! NHẬN ${shieldGranted} KHIÊN ẢO (5s)!`,
+                    '#facc15',
+                    true
+                );
+            }
         }
 
         if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
@@ -934,9 +1072,7 @@ window.Game.Enemies = {
             sourceEnemy &&
             !sourceEnemy.dead &&
             sourceEnemy.hp > 0 &&
-            state &&
-            Array.isArray(state.equippedRelics) &&
-            state.equippedRelics.includes('relic_thorn')
+            equippedRelics.includes('relic_thorn')
         ) {
             const thornDmg = Math.max(1, Math.round(dmg * 0.25));
             this.damageEnemy(sourceEnemy, thornDmg, false, true);
@@ -1011,7 +1147,6 @@ window.Game.Enemies = {
             });
         }
 
-        // SHIELD_ORB: 100% cho Boss và Mini-Boss
         const shieldOrbChance = enemy.isBoss || enemy.isMiniBoss ? 1.0 : enemy.isElite ? 0.25 : 0.08;
         if (Math.random() < shieldOrbChance) {
             const angle = Math.random() * Math.PI * 2;
@@ -1031,7 +1166,6 @@ window.Game.Enemies = {
             });
         }
 
-        // OVERDRIVE_ORB (Ngọc Cuồng Nộ Đỏ Cam): 100% khi diệt Mini-Boss / Boss, 6% cho quái thường
         const overdriveOrbChance = enemy.isBoss || enemy.isMiniBoss ? 1.0 : 0.06;
         if (Math.random() < overdriveOrbChance) {
             const angle = Math.random() * Math.PI * 2;
@@ -1051,12 +1185,11 @@ window.Game.Enemies = {
             });
         }
 
-        // Mảnh Thời Không (SHARD): Chắc chắn 2-3 mảnh khi diệt Mini-Boss
         let shardCount = 0;
         if (enemy.isBoss) {
             shardCount = 4 + Math.floor(Math.random() * 4);
         } else if (enemy.isMiniBoss) {
-            shardCount = 2 + Math.floor(Math.random() * 2); // Chắc chắn 2-3 mảnh
+            shardCount = 2 + Math.floor(Math.random() * 2);
         } else if (enemy.isElite) {
             shardCount = 1 + (Math.random() < 0.4 ? 1 : 0);
         } else if (Math.random() < 0.14) {
@@ -1082,20 +1215,53 @@ window.Game.Enemies = {
         }
     },
 
+    /**
+     * XỬ LÝ KHI QUÁI CHẾT (TÍCH HỢP BÙNG NỔ TRO TÀN II.9, GREED RELIC I.2 & VÙNG ĐẤT NGUYỀN RỦA IV.10)
+     */
     _handleEnemyDeath: function (enemy) {
         enemy.dead = true;
-        // Mini-Boss hồi sinh sau 16s, Boss chính 20s, quái thường 8s
-        enemy.respawnTimer = enemy.isBoss ? 20.0 : enemy.isMiniBoss ? 16.0 : 8.0;
 
-        const goldEarned = enemy.goldReward || 50;
-        const expEarned = enemy.expReward || 30;
+        // TÍNH NĂNG 8: Tương tác Vùng Đất Bị Nguyền (Cursed Grounds - IV.10)
+        const inCursed = this._isPlayerInCursedGround();
+        let baseRespawn = enemy.isBoss ? 20.0 : enemy.isMiniBoss ? 16.0 : 8.0;
+        if (inCursed) {
+            baseRespawn *= 0.5; // Giảm một nửa thời gian hồi sinh khi ở vùng nguyền
+        }
+        enemy.respawnTimer = baseRespawn;
 
-        if (window.Game.state) {
-            window.Game.state.gold = (window.Game.state.gold || 0) + goldEarned;
+        let goldEarned = enemy.goldReward || 50;
+        let expEarned = enemy.expReward || 30;
+
+        if (inCursed) {
+            expEarned = Math.round(expEarned * 1.50); // Tăng +50% EXP khi diệt quái trong vùng nguyền
+        }
+
+        // TÍNH NĂNG 2: Ngọc Nhân Đôi Thu Hoạch (Greed Relic - I.2)
+        const state = window.Game.state;
+        const equippedRelics = (state && Array.isArray(state.equippedRelics)) ? state.equippedRelics : [];
+        let isGreedTriggered = false;
+
+        if (equippedRelics.includes('relic_greed') && Math.random() < 0.25) {
+            goldEarned *= 2;
+            expEarned *= 2;
+            isGreedTriggered = true;
+        }
+
+        if (state) {
+            state.gold = (state.gold || 0) + goldEarned;
         }
 
         if (window.Game.Combat) {
             if (typeof window.Game.Combat.spawnFloatingText === 'function') {
+                if (isGreedTriggered) {
+                    window.Game.Combat.spawnFloatingText(
+                        enemy.x,
+                        enemy.y - enemy.radius - 42,
+                        '💰 x2 THU HOẠCH!',
+                        '#facc15',
+                        true
+                    );
+                }
                 window.Game.Combat.spawnFloatingText(
                     enemy.x,
                     enemy.y - enemy.radius - 28,
@@ -1106,6 +1272,39 @@ window.Game.Enemies = {
             }
             if (typeof window.Game.Combat.registerEnemyKill === 'function') {
                 window.Game.Combat.registerEnemyKill(enemy);
+            }
+        }
+
+        // TÍNH NĂNG 7B: BÙNG NỔ TRO TÀN (CORPSE EXPLOSION - II.9)
+        // Kích hoạt vụ nổ xác gây 15% HP tối đa của quái chết lên các quái lân cận trong bán kính 130px
+        const explosionDamage = Math.max(15, Math.round(enemy.maxHp * 0.15));
+        const explosionRadius = 130;
+
+        this.healWaves.push({
+            x: enemy.x,
+            y: enemy.y,
+            radius: 18,
+            maxRadius: explosionRadius,
+            color: 'rgba(239, 68, 68, 0.92)',
+            alpha: 1.0
+        });
+
+        this.corpseExplosions.push({
+            x: enemy.x,
+            y: enemy.y,
+            radius: explosionRadius,
+            life: 0.35,
+            maxLife: 0.35
+        });
+
+        for (let i = 0; i < this.list.length; i++) {
+            const ally = this.list[i];
+            if (!ally || ally.dead || ally.hp <= 0 || ally.id === enemy.id) continue;
+            if (ally.timeline !== enemy.timeline && !ally.isBoss) continue;
+
+            const dist = Math.hypot(ally.x - enemy.x, ally.y - enemy.y);
+            if (dist <= explosionRadius) {
+                this.damageEnemy(ally, explosionDamage, false, false, true, enemy.x, enemy.y);
             }
         }
 
@@ -1122,9 +1321,6 @@ window.Game.Enemies = {
         }
     },
 
-    /**
-     * KIỂM TRA VŨ KHÍ ĐANG CẦM CỦA NGƯỜI CHƠI CÓ PHẢI SÚNG TẦM XA (laser_gun / chrono_cannon)
-     */
     _isPlayerUsingRangedGun: function () {
         const state = window.Game.state;
         const player = window.Game.player;
@@ -1135,9 +1331,6 @@ window.Game.Enemies = {
         return w === 'laser_gun' || w === 'chrono_cannon';
     },
 
-    /**
-     * LẤY GÓC NGẮM HIỆN TẠI CỦA NGƯỜI CHƠI ĐỂ PHỤC VỤ AI NÉ TIA NGẮM (EVASIVE SIDESTEP)
-     */
     _getPlayerAimAngle: function (player, fallbackTarget) {
         if (!player) return 0;
         if (typeof player.aimAngle === 'number') return player.aimAngle;
@@ -1155,9 +1348,6 @@ window.Game.Enemies = {
         return 0;
     },
 
-    /**
-     * TÌM ĐỒNG ĐỘI TANKER GẦN NHẤT ĐỂ QUÁI KITER LÙI VỀ NẤP SAU LƯNG (TACTICAL SYNERGY)
-     */
     _findNearbyTankerAlly: function (kiter) {
         let bestTanker = null;
         let minDist = 420;
@@ -1183,9 +1373,6 @@ window.Game.Enemies = {
         return bestTanker;
     },
 
-    /**
-     * TÍNH TOÁN VA CHẠM KHỐI KHIÊN CHẮN 120° (TANKER / SHIELD-BEARER) - O(1) VECTOR MATH
-     */
     _isHitBlockedByShield: function (enemy, attackerX, attackerY) {
         if (!enemy.isTanker || enemy.dead || enemy.hp <= 0) return false;
 
@@ -1208,11 +1395,7 @@ window.Game.Enemies = {
     },
 
     /**
-     * XỬ LÝ SÁT THƯƠNG LÊN QUÁI VẬT & MINI-BOSS & BOSS:
-     * - Tích hợp Khiên Gương Lượng Tử của Chiến Giáp Phản Quang (FUTURE Mini-Boss).
-     * - Tích hợp Giáp Đá Cổ Đại của Cự Thạch Hộ Pháp (PAST Mini-Boss).
-     * - Tích hợp Khiên Tanker chống bắn tỉa (chặn 88% ST ở >210px + nảy đạn mảnh vỡ;
-     *   nhận +25% ST khi bị áp sát <130px hoặc đánh lén sau lưng).
+     * XỬ LÝ SÁT THƯƠNG GÂY LÊN QUÁI (TÍCH HỢP CHÉM XUYÊN GIÁP II.7 & PHẢN ĐẠN KHIÊN)
      */
     damageEnemy: function (enemy, amount, isCrit, isThornDamage, isAoE, attackerX, attackerY) {
         if (!enemy || enemy.dead || enemy.hp <= 0) return;
@@ -1221,6 +1404,7 @@ window.Game.Enemies = {
         enemy.lastHitTime = now;
 
         const player = window.Game.player;
+        const state = window.Game.state;
         const srcX = typeof attackerX === 'number' ? attackerX : (player ? player.x : enemy.x);
         const srcY = typeof attackerY === 'number' ? attackerY : (player ? player.y : enemy.y);
         const hitDist = Math.hypot(srcX - enemy.x, srcY - enemy.y);
@@ -1229,13 +1413,22 @@ window.Game.Enemies = {
         let isVulnerableHit = false;
         let isShieldBlocked = false;
 
-        // 0A. MINI-BOSS FUTURE: KHIÊN GƯƠNG LƯỢNG TỬ (Chiến Giáp Phản Quang)
+        // TÍNH NĂNG 7A: KIỂM TRA NÂNG CẤP CHÉM XUYÊN GIÁP (ARMOR PIERCING - II.7)
+        const hasArmorPiercing = Boolean(
+            state && (
+                (state.upgrades && state.upgrades.armorPiercing) ||
+                (Array.isArray(state.combatUpgrades) && state.combatUpgrades.includes('armor_piercing')) ||
+                state.hasArmorPiercing
+            )
+        );
+        const isMeleeHit = !this._isPlayerUsingRangedGun() && hitDist <= 165;
+
+        // 0A. MINI-BOSS FUTURE: KHIÊN GƯƠNG LƯỢNG TỬ
         if (enemy.isMiniBoss && enemy.subType === 'robot_miniboss' && enemy.mirrorShieldActive && !isThornDamage) {
             const usingRangedGun = this._isPlayerUsingRangedGun();
             const isMeleeStrike = hitDist <= 150 && !usingRangedGun;
 
             if (isMeleeStrike) {
-                // Người chơi lướt vào chém cận chiến -> Phá vỡ Khiên Gương Lượng Tử!
                 enemy.mirrorShieldActive = false;
                 enemy.mirrorShieldTimer = 0;
                 enemy.mirrorShieldCd = 8.0;
@@ -1262,7 +1455,6 @@ window.Game.Enemies = {
                     );
                 }
             } else if (usingRangedGun || hitDist > 150) {
-                // Người chơi bắn laser_gun / chrono_cannon hoặc bắn xa vào Khiên Gương -> Phản xạ tia laser!
                 finalAmount *= 0.08;
                 isShieldBlocked = true;
 
@@ -1294,7 +1486,7 @@ window.Game.Enemies = {
                     window.Game.Combat.spawnFloatingText(
                         enemy.x,
                         enemy.y - enemy.radius - 26,
-                        '⚡ PHẢN XẠ LASER LƯỢNG TỬ! (Áp sát cận chiến để phá!)',
+                        '⚡ PHẢN XẠ LASER LƯỢNG TỬ!',
                         '#ff0844',
                         true
                     );
@@ -1302,10 +1494,10 @@ window.Game.Enemies = {
             }
         }
 
-        // 0B. MINI-BOSS PAST: GIÁP ĐÁ CỔ ĐẠI CỦA CỰ THẠCH HỘ PHÁP (Giảm 60% sát thương tầm xa)
+        // 0B. MINI-BOSS PAST: GIÁP ĐÁ CỔ ĐẠI
         if (enemy.isMiniBoss && enemy.subType === 'ancient_miniboss' && enemy.stoneArmorActive && !isThornDamage) {
             if (hitDist > 185 || this._isPlayerUsingRangedGun()) {
-                finalAmount *= 0.40; // Giảm 60% sát thương tầm xa
+                finalAmount *= 0.40;
                 isShieldBlocked = true;
 
                 const deflectAngle = Math.atan2(srcY - enemy.y, srcX - enemy.x);
@@ -1330,14 +1522,14 @@ window.Game.Enemies = {
             }
         }
 
-        // 1. KIỂM TRA KHỐI KHIÊN CHỐNG ĐẠN TẦM XA & ĐIỂM YẾU SAU LƯNG CỦA TANKER (isTanker)
+        // 1. VA CHẠM KHIÊN CHỐNG ĐẠN CỦA TANKER (TÍNH NĂNG XUYÊN GIÁP BỎ QUA 50% GIẢM THƯƠNG)
         if (enemy.isTanker && !isAoE && !isThornDamage) {
             const blocked = this._isHitBlockedByShield(enemy, srcX, srcY);
             if (blocked) {
                 isShieldBlocked = true;
 
                 if (hitDist > 210) {
-                    // Đòn bắn từ xa (> 210px) đập vào khiên: Chặn tới 88% sát thương và nảy mảnh vỡ phản kích!
+                    // Đòn bắn tầm xa bị giảm 88%
                     finalAmount *= 0.12;
 
                     const shardAngle = Math.atan2(srcY - enemy.y, srcX - enemy.x) + (Math.random() - 0.5) * 0.12;
@@ -1365,18 +1557,32 @@ window.Game.Enemies = {
                         );
                     }
                 } else if (hitDist < 130) {
-                    // Người chơi dũng cảm áp sát < 130px: Gây thêm +25% sát thương xuyên áp lực!
                     isShieldBlocked = false;
                     finalAmount *= 1.25;
                     isVulnerableHit = true;
                 } else {
-                    // Khoảng cách trung bình (130px - 210px): Chặn 78% như cơ bản
-                    finalAmount *= 0.22;
+                    // Khoảng cách trung bình (130px - 210px): bình thường giảm 78% (chỉ nhận 22%)
+                    let damageFactor = 0.22;
+                    if (isMeleeHit && hasArmorPiercing) {
+                        // Bỏ qua 50% mức giảm thương từ khiên: từ giảm 78% còn giảm 39% (nhận 61%)
+                        damageFactor = 0.61;
+                        if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
+                            window.Game.Combat.spawnFloatingText(
+                                enemy.x,
+                                enemy.y - enemy.radius - 32,
+                                '🗡️ XUYÊN 50% KHIÊN!',
+                                '#38bdf8',
+                                true
+                            );
+                        }
+                    }
+                    finalAmount *= damageFactor;
+
                     if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
                         window.Game.Combat.spawnFloatingText(
                             enemy.x,
                             enemy.y - enemy.radius - 22,
-                            'CHẶN KHIÊN! (-78%)',
+                            'CHẶN KHIÊN!',
                             enemy.timeline === 'FUTURE' ? '#38bdf8' : '#fbbf24',
                             true
                         );
@@ -1394,7 +1600,6 @@ window.Game.Enemies = {
                     });
                 }
             } else {
-                // Người chơi vòng ra sau lưng (!blocked) hoặc áp sát < 130px: Tanker nhận thêm +25% sát thương!
                 finalAmount *= 1.25;
                 isVulnerableHit = true;
 
@@ -1410,7 +1615,7 @@ window.Game.Enemies = {
             }
         }
 
-        // 2. KHIÊN LỆCH PHA PHẢN CHẤN & TRẠNG THÁI SUY YẾU CỦA BOSS CHÍNH
+        // 2. KHIÊN LỆCH PHA CỦA BOSS CHÍNH
         if (enemy.isBoss) {
             const currentTimeline = (window.Game.state && window.Game.state.timeline) || 'PRESENT';
             const requiredTimeline = enemy.shieldTimeline || 'PAST';
@@ -1494,12 +1699,9 @@ window.Game.Enemies = {
         return window.Game.World.canMoveTo(nx, ny);
     },
 
-    /**
-     * THUẬT TOÁN RAYCAST LOOKAHEAD 5 HƯỚNG TRÁNH KẸT CHO QUÁI KITING:
-     */
     _findSafeKiteVector: function (enemy, wishVx, wishVy, stepDist) {
         const baseAngle = Math.atan2(wishVy, wishVx);
-        const testAngles = [0, 0.61, -0.61, 1.22, -1.22]; // 0°, ±35°, ±70°
+        const testAngles = [0, 0.61, -0.61, 1.22, -1.22];
         const speed = Math.hypot(wishVx, wishVy);
 
         for (let i = 0; i < testAngles.length; i++) {
@@ -1517,9 +1719,26 @@ window.Game.Enemies = {
         return { vx: 0, vy: 0 };
     },
 
+    /**
+     * TÍNH NĂNG 1: NAM CHÂM HÚT VẬT PHẨM (LOOT MAGNET - I.1)
+     * Mở rộng bán kính hút từ 120px lên đến tối đa 450px dựa theo nâng cấp
+     */
     _updateLootDrops: function (dt, player) {
-        const hasPet = Boolean(window.Game.state && window.Game.state.hasPet);
-        const magnetRadius = hasPet ? 240 : 120;
+        const state = window.Game.state;
+        const hasPet = Boolean(state && state.hasPet);
+
+        // Tính toán bán kính nam châm dựa theo nâng cấp Loot Magnet
+        let magnetRadius = hasPet ? 240 : 120;
+        if (state) {
+            if (typeof state.lootMagnetRadius === 'number') {
+                magnetRadius = Math.max(magnetRadius, state.lootMagnetRadius);
+            } else if (state.lootMagnetLevel) {
+                magnetRadius = Math.min(450, 120 + state.lootMagnetLevel * 66);
+            } else if (Array.isArray(state.equippedRelics) && state.equippedRelics.includes('relic_magnet')) {
+                magnetRadius = 450;
+            }
+        }
+        magnetRadius = Math.min(450, magnetRadius);
 
         for (let i = this.lootDrops.length - 1; i >= 0; i--) {
             const item = this.lootDrops[i];
@@ -1556,7 +1775,7 @@ window.Game.Enemies = {
 
                 if (dist <= magnetRadius || item.magnetized) {
                     item.magnetized = true;
-                    const pullSpeed = 460 + (magnetRadius - Math.min(dist, magnetRadius)) * 2.2;
+                    const pullSpeed = 460 + (magnetRadius - Math.min(dist, magnetRadius)) * 2.4;
                     const angle = Math.atan2(dy, dx);
                     item.x += Math.cos(angle) * pullSpeed * dt;
                     item.y += Math.sin(angle) * pullSpeed * dt;
@@ -1571,35 +1790,58 @@ window.Game.Enemies = {
         }
     },
 
+    /**
+     * THU THẬP VẬT PHẨM (TÍCH HỢP TỈ LỆ 25% X2 THU HOẠCH TỪ NGỌC GREED RELIC I.2)
+     */
     _collectLootItem: function (item, player) {
         const state = window.Game.state;
+        const equippedRelics = (state && Array.isArray(state.equippedRelics)) ? state.equippedRelics : [];
 
         if (window.Game.Audio && typeof window.Game.Audio.playCoin === 'function') {
             window.Game.Audio.playCoin();
         }
 
+        let isGreedTriggered = false;
+        let value = item.value;
+
+        // TÍNH NĂNG 2: Ngọc Nhân Đôi Thu Hoạch (Greed Relic - I.2)
+        if (
+            (item.type === 'GOLD' || item.type === 'EXP_ORB') &&
+            equippedRelics.includes('relic_greed') &&
+            Math.random() < 0.25
+        ) {
+            value *= 2;
+            isGreedTriggered = true;
+        }
+
         if (item.type === 'GOLD') {
-            if (state) state.gold = (state.gold || 0) + item.value;
+            if (state) state.gold = (state.gold || 0) + value;
             if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
-                window.Game.Combat.spawnFloatingText(player.x, player.y - 32, `+${item.value}G`, '#facc15');
+                if (isGreedTriggered) {
+                    window.Game.Combat.spawnFloatingText(player.x, player.y - 48, '💰 x2 THU HOẠCH!', '#facc15', true);
+                }
+                window.Game.Combat.spawnFloatingText(player.x, player.y - 32, `+${value}G`, '#facc15');
             }
         } else if (item.type === 'HP_ORB') {
             const maxHp = player.maxHp || 100;
-            player.hp = Math.min(maxHp, player.hp + item.value);
+            player.hp = Math.min(maxHp, player.hp + value);
             if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
-                window.Game.Combat.spawnFloatingText(player.x, player.y - 32, `+${item.value} HP`, '#4ade80');
+                window.Game.Combat.spawnFloatingText(player.x, player.y - 32, `+${value} HP`, '#4ade80');
             }
         } else if (item.type === 'EXP_ORB') {
             if (window.Game.Systems && typeof window.Game.Systems.addExp === 'function') {
-                window.Game.Systems.addExp(item.value);
+                window.Game.Systems.addExp(value);
             }
             if (state) state.rage = Math.min(100, (state.rage || 0) + 8);
             if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
-                window.Game.Combat.spawnFloatingText(player.x, player.y - 32, `+${item.value} EXP / +8 NỘ`, '#38bdf8');
+                if (isGreedTriggered) {
+                    window.Game.Combat.spawnFloatingText(player.x, player.y - 48, '💰 x2 THU HOẠCH!', '#facc15', true);
+                }
+                window.Game.Combat.spawnFloatingText(player.x, player.y - 32, `+${value} EXP / +8 NỘ`, '#38bdf8');
             }
         } else if (item.type === 'SHIELD_ORB') {
             const maxShield = player.maxShield || 100;
-            player.shield = Math.min(maxShield, (player.shield || 0) + item.value);
+            player.shield = Math.min(maxShield, (player.shield || 0) + value);
             if (window.Game.Combat) {
                 if (typeof window.Game.Combat.activateCooldownHaste === 'function') {
                     window.Game.Combat.activateCooldownHaste(3.0);
@@ -1608,7 +1850,7 @@ window.Game.Enemies = {
                     window.Game.Combat.spawnFloatingText(
                         player.x,
                         player.y - 36,
-                        `🛡️ +${item.value} GIÁP & TĂNG TỐC HỒI CHIÊU (3s)!`,
+                        `🛡️ +${value} GIÁP & TĂNG TỐC HỒI CHIÊU (3s)!`,
                         '#00f2fe',
                         true
                     );
@@ -1626,9 +1868,9 @@ window.Game.Enemies = {
                 );
             }
         } else if (item.type === 'SHARD') {
-            if (state) state.timeShards = (state.timeShards || 0) + item.value;
+            if (state) state.timeShards = (state.timeShards || 0) + value;
             if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
-                window.Game.Combat.spawnFloatingText(player.x, player.y - 38, `+${item.value} Mảnh Thời Không`, '#d946ef', true);
+                window.Game.Combat.spawnFloatingText(player.x, player.y - 38, `+${value} Mảnh Thời Không`, '#d946ef', true);
             }
         }
     },
@@ -1667,9 +1909,9 @@ window.Game.Enemies = {
             }
         }
     },
-
-    /**
-     * CẬP NHẬT AI RIÊNG BIỆT CHO 3 BOSS PHỤ KỶ NGUYÊN (isMiniBoss: true)
+/**
+     * CẬP NHẬT AI CHIẾN THUẬT RIÊNG CHO 3 BOSS PHỤ KỶ NGUYÊN (isMiniBoss: true)
+     * TÍCH HỢP KÍNH HỒNG NGOẠI CẢNH BÁO (SNIPER SCOPE - I.7)
      */
     _updateMiniBossAI: function (e, dt, player, distToPlayer, dx, dy) {
         if (!player || player.hp <= 0) return;
@@ -1682,7 +1924,7 @@ window.Game.Enemies = {
         const dirX = dx / (distToPlayer || 1);
         const dirY = dy / (distToPlayer || 1);
 
-        // 1. MINI-BOSS QUÁ KHỨ: CỰ THẠCH HỘ PHÁP (3 vòng sóng chấn động liên hoàn & Giáp Đá)
+        // 1. MINI-BOSS QUÁ KHỨ: CỰ THẠCH HỘ PHÁP (ancient_miniboss)
         if (e.subType === 'ancient_miniboss') {
             e.stoneArmorActive = true;
             e.slamComboCd = (typeof e.slamComboCd === 'number' ? e.slamComboCd : 4.5) - dt;
@@ -1700,7 +1942,6 @@ window.Game.Enemies = {
                     );
                 }
 
-                // Tạo 3 vòng sóng chấn động liên hoàn cách nhau 0.32s với bán kính mở rộng dần
                 const ringRadii = [145, 205, 265];
                 for (let rIdx = 0; rIdx < 3; rIdx++) {
                     this.queuedWaveRings.push({
@@ -1714,7 +1955,6 @@ window.Game.Enemies = {
                 }
             }
 
-            // Bắn mảnh thiên thạch cổ đại tầm trung
             e.shootCd -= dt;
             if (e.shootCd <= 0 && distToPlayer <= 560) {
                 e.shootCd = 2.4;
@@ -1745,13 +1985,12 @@ window.Game.Enemies = {
             }
         }
 
-        // 2. MINI-BOSS HIỆN TẠI: MẪU HOÀNG ĐỘC TỐ (Chùm 5 quả cầu axit độc & Triệu hồi 2 quái tự bạo mỗi 9s)
+        // 2. MINI-BOSS HIỆN TẠI: MẪU HOÀNG ĐỘC TỐ (mutant_miniboss)
         else if (e.subType === 'mutant_miniboss') {
             e.acidBarrageCd = (typeof e.acidBarrageCd === 'number' ? e.acidBarrageCd : 2.5) - dt;
             if (e.acidBarrageCd <= 0 && distToPlayer <= 620) {
                 e.acidBarrageCd = 2.5;
                 const baseAngle = Math.atan2(dy, dx);
-                // Bắn chùm 5 quả cầu axit độc
                 const spread5 = [-0.36, -0.18, 0, 0.18, 0.36];
                 for (let k = 0; k < spread5.length; k++) {
                     const a = baseAngle + spread5[k];
@@ -1770,14 +2009,12 @@ window.Game.Enemies = {
                 }
             }
 
-            // Triệu hồi 2 quái tự bạo nhỏ mỗi 9 giây
             e.summonBroodCd = (typeof e.summonBroodCd === 'number' ? e.summonBroodCd : 9.0) - dt;
             if (e.summonBroodCd <= 0 && distToPlayer <= 680) {
                 e.summonBroodCd = 9.0;
                 this._spawnMutantMinions(e);
             }
 
-            // Di chuyển chiến thuật giữ khoảng cách vừa phải
             if (distToPlayer <= 680) {
                 let moveVx = 0;
                 let moveVy = 0;
@@ -1804,7 +2041,7 @@ window.Game.Enemies = {
             }
         }
 
-        // 3. MINI-BOSS TƯƠNG LAI: CHIẾN GIÁP PHẢN QUANG (Khiên Gương Lượng Tử 3s mỗi 8s)
+        // 3. MINI-BOSS TƯƠNG LAI: CHIẾN GIÁP PHẢN QUANG (robot_miniboss)
         else if (e.subType === 'robot_miniboss') {
             if (e.mirrorShieldActive) {
                 e.mirrorShieldTimer -= dt;
@@ -1816,7 +2053,7 @@ window.Game.Enemies = {
                 if (e.mirrorShieldCd <= 0 && distToPlayer <= 680) {
                     e.mirrorShieldActive = true;
                     e.mirrorShieldTimer = 3.0;
-                    e.mirrorShieldCd = 8.0; // Chu kỳ mỗi 8 giây kích hoạt 3 giây
+                    e.mirrorShieldCd = 8.0;
 
                     this.healWaves.push({
                         x: e.x,
@@ -1884,6 +2121,9 @@ window.Game.Enemies = {
         }
     },
 
+    /**
+     * CẬP NHẬT TRẠNG THÁI VÀ AI CHÚA TỂ THỜI KHÔNG
+     */
     _updateBossAI: function (boss, dt, player, distToPlayer, dx, dy) {
         if (boss.stunTimer > 0) {
             boss.stunTimer -= dt;
@@ -2176,6 +2416,9 @@ window.Game.Enemies = {
         }
     },
 
+    /**
+     * VÒNG LẶP TICK CHÍNH CỦA HỆ THỐNG ENEMY
+     */
     update: function (dt) {
         if (window.Game.state && window.Game.state.isPaused) return;
 
@@ -2197,7 +2440,22 @@ window.Game.Enemies = {
             }
         }
 
-        // Cập nhật hàng đợi 3 vòng sóng chấn động liên hoàn của Cự Thạch Hộ Pháp
+        if (this.frostHeartCooldown > 0) {
+            this.frostHeartCooldown -= dt;
+        }
+
+        if (this.lastStandCooldown > 0) {
+            this.lastStandCooldown -= dt;
+        }
+
+        if (player && player.lastStandShieldTimer && player.lastStandShieldTimer > 0) {
+            player.lastStandShieldTimer -= dt;
+            if (player.lastStandShieldTimer <= 0 && player.shield > 0) {
+                player.shield = 0;
+            }
+        }
+
+        // Cập nhật hàng đợi sóng chấn động liên hoàn
         for (let i = this.queuedWaveRings.length - 1; i >= 0; i--) {
             const qr = this.queuedWaveRings[i];
             qr.delay -= dt;
@@ -2219,6 +2477,15 @@ window.Game.Enemies = {
                     }
                 }
                 this.queuedWaveRings.splice(i, 1);
+            }
+        }
+
+        // Cập nhật hiệu ứng bùng nổ tro tàn (Corpse Explosion)
+        for (let i = this.corpseExplosions.length - 1; i >= 0; i--) {
+            const ce = this.corpseExplosions[i];
+            ce.life -= dt;
+            if (ce.life <= 0) {
+                this.corpseExplosions.splice(i, 1);
             }
         }
 
@@ -2257,8 +2524,8 @@ window.Game.Enemies = {
 
         this._updateLootDrops(dt, player);
 
-        const isFrozen = Boolean(state && typeof state.chronoFreezeTimer === 'number' && state.chronoFreezeTimer > 0);
-        if (isFrozen) {
+        const isChronoFrozen = Boolean(state && typeof state.chronoFreezeTimer === 'number' && state.chronoFreezeTimer > 0);
+        if (isChronoFrozen) {
             state.chronoFreezeTimer = Math.max(0, state.chronoFreezeTimer - dt);
             for (let i = 0; i < this.list.length; i++) {
                 const e = this.list[i];
@@ -2283,21 +2550,34 @@ window.Game.Enemies = {
             height: 720
         };
 
+        // Lấy danh sách vệt lửa từ Giày Lướt Phản Lực (Aero Boots - I.3)
+        const fireTrails = (window.Game.Combat && Array.isArray(window.Game.Combat.fireTrails))
+            ? window.Game.Combat.fireTrails
+            : (player && Array.isArray(player.fireTrails))
+            ? player.fireTrails
+            : [];
+
+        const inCursedGround = this._isPlayerInCursedGround();
+
         for (let i = this.list.length - 1; i >= 0; i--) {
             const e = this.list[i];
 
             if (e.dead) {
-                // Xóa hẳn quái triệu hồi sau khi chết
                 if (e.isSummonedMinion) {
                     this.list.splice(i, 1);
                     continue;
                 }
 
                 if (e.respawnTimer > 0) {
-                    e.respawnTimer -= dt;
+                    // TÍNH NĂNG 8: Vùng Đất Bị Nguyền tăng gấp đôi tốc độ đếm lùi hồi sinh
+                    const respawnRate = inCursedGround ? dt * 2.0 : dt;
+                    e.respawnTimer -= respawnRate;
+
                     if (e.respawnTimer <= 0) {
                         e.dead = false;
                         e.hitFlash = 0;
+                        e.freezeTimer = 0;
+                        e.burnTimer = 0;
 
                         if (e.isBoss) {
                             const loop = (window.Game.state && window.Game.state.loopLevel) || 1;
@@ -2339,6 +2619,40 @@ window.Game.Enemies = {
             }
 
             if (!e.isBoss && e.timeline !== currentTimeline) {
+                continue;
+            }
+
+            // TÍNH NĂNG 3: XỬ LÝ VỆT LỬA TỪ GIÀY LƯỚT PHẢN LỰC (AERO BOOTS - I.3)
+            // Quái giẫm vào vệt lửa bị làm chậm 40% tốc chạy và nhận sát thương đốt cháy liên tục
+            if (fireTrails.length > 0) {
+                for (let f = 0; f < fireTrails.length; f++) {
+                    const ft = fireTrails[f];
+                    if (!ft || ft.life <= 0) continue;
+                    const ftRadius = ft.radius || 32;
+                    const dFire = Math.hypot(e.x - ft.x, e.y - ft.y);
+                    if (dFire <= e.radius + ftRadius) {
+                        e.burnTimer = 2.2;
+                        e.burnDps = ft.damage || 28;
+                        break;
+                    }
+                }
+            }
+
+            // Xử lý đốt cháy theo thời gian
+            if (e.burnTimer && e.burnTimer > 0) {
+                e.burnTimer -= dt;
+                e.burnTickTimer = (e.burnTickTimer || 0) - dt;
+                if (e.burnTickTimer <= 0) {
+                    e.burnTickTimer = 0.4;
+                    const tickDmg = Math.max(2, Math.round((e.burnDps || 28) * 0.4));
+                    this.damageEnemy(e, tickDmg, false, false, true);
+                }
+            }
+
+            // TÍNH NĂNG 4: Xử lý hiệu ứng Đóng Băng từ Trái Tim Băng Giá (Frost Heart - I.5)
+            if (e.freezeTimer && e.freezeTimer > 0) {
+                e.freezeTimer -= dt;
+                if (e.hitFlash > 0) e.hitFlash = Math.max(0, e.hitFlash - dt);
                 continue;
             }
 
@@ -2390,7 +2704,6 @@ window.Game.Enemies = {
                 e.facingAngle = Math.atan2(dy, dx);
             }
 
-            // CẬP NHẬT AI CHO 3 BOSS PHỤ KỶ NGUYÊN (isMiniBoss: true)
             if (e.isMiniBoss) {
                 this._updateMiniBossAI(e, dt, player, distToPlayer, dx, dy);
 
@@ -2402,12 +2715,7 @@ window.Game.Enemies = {
                 continue;
             }
 
-            /**
-             * CƠ CHẾ NÉ TIA NGẮM (EVASIVE SIDESTEP - ANTI-SNIPER AI):
-             * Khi người chơi cầm laser_gun hoặc chrono_cannon và hướng mặt về phía quái isKiter / isElite
-             * (góc lệch < 20 độ ~ 0.349 rad, khoảng cách 180px - 450px), quái có evadeCd (hồi mỗi 3.2s)
-             * lập tức lướt ngang vuông góc 90 độ (evadeTimer = 0.22s, tốc độ x2.4) kèm vệt bóng mờ!
-             */
+            // ANTI-SNIPER AI: EVASIVE SIDESTEP
             if (
                 (e.isKiter || e.isElite) &&
                 !e.isTanker &&
@@ -2421,7 +2729,6 @@ window.Game.Enemies = {
                 const playerAim = this._getPlayerAimAngle(player, e);
                 const angleDiff = Math.abs(Math.atan2(Math.sin(playerAim - anglePlayerToEnemy), Math.cos(playerAim - anglePlayerToEnemy)));
 
-                // 20 độ = 0.349065 rad
                 if (angleDiff < 0.349) {
                     e.evadeCd = 3.2;
                     e.evadeTimer = 0.22;
@@ -2450,7 +2757,6 @@ window.Game.Enemies = {
                 }
             }
 
-            // Đang trong trạng thái lướt ngang né đạn (Evasive Sidestep)
             if (e.evadeTimer && e.evadeTimer > 0) {
                 e.evadeTimer -= dt;
                 e.afterimageTick = (e.afterimageTick || 0) - dt;
@@ -2498,9 +2804,6 @@ window.Game.Enemies = {
                     if (distToPlayer <= slamRadius + (player.radius || 20)) {
                         this._applyDamageToPlayer(Math.round(e.damage * 0.85), e);
                         this._applyPlayerSlow(1.6);
-                        if (window.Game.Combat && typeof window.Game.Combat.spawnFloatingText === 'function') {
-                            window.Game.Combat.spawnFloatingText(player.x, player.y - 42, 'LÀM CHẬM (-25% TỐC)!', '#f59e0b');
-                        }
                     }
                 }
             }
@@ -2606,7 +2909,7 @@ window.Game.Enemies = {
                 }
             }
 
-            // Robot Xạ Thủ Bắn Tỉa (Ranged)
+            // Robot Bắn Tỉa (Ranged Kiter)
             if (e.type === 'robot' && e.isKiter && distToPlayer <= 540) {
                 e.shootCd -= dt;
                 if (e.shootCd <= 0) {
@@ -2631,14 +2934,14 @@ window.Game.Enemies = {
                 }
             }
 
-            /**
-             * BỘ NÃO DI CHUYỂN CHIẾN THUẬT & ĐỘI HÌNH LIÊN KẾT (TACTICAL SYNERGY):
-             * - Nếu Quái Kiter bị mất máu (e.hp < e.maxHp), ưu tiên tìm đồng đội isTanker gần đó
-             *   và di chuyển lùi về điểm nấp phía sau lưng Tanker (ngược hướng người chơi) để được che đạn!
-             */
+            // TÍNH TOÁN TỐC ĐỘ DI CHUYỂN KẾT HỢP LÀM CHẬM 40% TỪ VỆT LỬA
+            let baseMoveSpeed = e.kamikazeActive ? e.speed * 1.85 : e.speed;
+            if (e.burnTimer && e.burnTimer > 0) {
+                baseMoveSpeed *= 0.60; // Làm chậm 40% tốc độ di chuyển
+            }
+
             let moveVx = 0;
             let moveVy = 0;
-            const currentSpeed = e.kamikazeActive ? e.speed * 1.85 : e.speed;
 
             if (distToPlayer <= aggroRange) {
                 const dirX = dx / (distToPlayer || 1);
@@ -2647,7 +2950,7 @@ window.Game.Enemies = {
                 if (e.isKiter) {
                     let usedTankerCover = false;
 
-                    // TACTICAL SYNERGY: Kiter mất máu tìm Tanker đồng đội để nấp sau lưng
+                    // TACTICAL SYNERGY: Kiter mất máu lùi về nấp sau lưng Tanker
                     if (e.hp < e.maxHp) {
                         const protector = this._findNearbyTankerAlly(e);
                         if (protector) {
@@ -2655,7 +2958,6 @@ window.Game.Enemies = {
                             const pToTankerY = protector.y - player.y;
                             const pToTankerDist = Math.hypot(pToTankerX, pToTankerY) || 1;
 
-                            // Điểm nấp nằm phía sau lưng Tanker 72px tính từ hướng người chơi
                             const coverX = protector.x + (pToTankerX / pToTankerDist) * 72;
                             const coverY = protector.y + (pToTankerY / pToTankerDist) * 72;
                             const toCoverX = coverX - e.x;
@@ -2665,7 +2967,7 @@ window.Game.Enemies = {
                             e.synergyTankerId = protector.id;
 
                             if (toCoverDist > 22) {
-                                const coverSpeed = currentSpeed * 1.22;
+                                const coverSpeed = baseMoveSpeed * 1.22;
                                 const safeCoverVec = this._findSafeKiteVector(
                                     e,
                                     (toCoverX / toCoverDist) * coverSpeed,
@@ -2688,7 +2990,7 @@ window.Game.Enemies = {
                         const safeDistMax = 280;
 
                         if (distToPlayer < 200) {
-                            const retreatSpeed = currentSpeed * 1.25;
+                            const retreatSpeed = baseMoveSpeed * 1.25;
                             const wishVx = -dirX * retreatSpeed;
                             const wishVy = -dirY * retreatSpeed;
 
@@ -2703,22 +3005,20 @@ window.Game.Enemies = {
                             }
                             const perpX = -dirY * e.strafeDir;
                             const perpY = dirX * e.strafeDir;
-                            moveVx = perpX * currentSpeed * 0.85;
-                            moveVy = perpY * currentSpeed * 0.85;
+                            moveVx = perpX * baseMoveSpeed * 0.85;
+                            moveVy = perpY * baseMoveSpeed * 0.85;
                         } else if (distToPlayer > safeDistMax) {
-                            moveVx = dirX * currentSpeed * 0.9;
-                            moveVy = dirY * currentSpeed * 0.9;
+                            moveVx = dirX * baseMoveSpeed * 0.9;
+                            moveVy = dirY * baseMoveSpeed * 0.9;
                         }
                     }
                 } else {
-                    // Tanker & Quái Melee tiếp cận mục tiêu
                     if (distToPlayer > (e.radius || 20) + (player.radius || 20) - 2) {
-                        moveVx = dirX * currentSpeed;
-                        moveVy = dirY * currentSpeed;
+                        moveVx = dirX * baseMoveSpeed;
+                        moveVy = dirY * baseMoveSpeed;
                     }
                 }
             } else {
-                // Tuần tra tự do
                 e.patrolAngle += dt * 0.8;
                 const targetX = e.spawnX + Math.cos(e.patrolAngle) * 55;
                 const targetY = e.spawnY + Math.sin(e.patrolAngle) * 55;
@@ -2726,8 +3026,8 @@ window.Game.Enemies = {
                 const pdy = targetY - e.y;
                 const pdist = Math.hypot(pdx, pdy);
                 if (pdist > 5) {
-                    moveVx = (pdx / pdist) * (currentSpeed * 0.45);
-                    moveVy = (pdy / pdist) * (currentSpeed * 0.45);
+                    moveVx = (pdx / pdist) * (baseMoveSpeed * 0.45);
+                    moveVy = (pdy / pdist) * (baseMoveSpeed * 0.45);
                     e.facingAngle = Math.atan2(moveVy, moveVx);
                 }
             }
@@ -2745,7 +3045,7 @@ window.Game.Enemies = {
             }
         }
 
-        // Cập nhật đạn (Giới hạn 90 viên để duy trì 60 FPS)
+        // Cập nhật đường đạn
         for (let i = this.projectiles.length - 1; i >= 0; i--) {
             const p = this.projectiles[i];
 
@@ -2777,10 +3077,66 @@ window.Game.Enemies = {
         }
     },
 
+    /**
+     * VẼ ĐƯỜNG TIA HỒNG NGOẠI CẢNH BÁO BẮN TỈA (SNIPER SCOPE - I.7)
+     * Khi quái bắn tỉa chuẩn bị bắn trước 0.65s (shootCd <= 0.65) & có relic_sniper_scope
+     */
+    _drawSniperScopeWarnings: function (ctx, camX, camY, now) {
+        const state = window.Game.state;
+        const equippedRelics = (state && Array.isArray(state.equippedRelics)) ? state.equippedRelics : [];
+        if (!equippedRelics.includes('relic_sniper_scope')) return;
+
+        const player = window.Game.player;
+        if (!player || player.hp <= 0) return;
+
+        ctx.save();
+        ctx.strokeStyle = '#ef4444';
+        ctx.fillStyle = '#ef4444';
+        ctx.lineWidth = 1.8;
+        ctx.setLineDash([8, 5]);
+
+        const currentTimeline = (state && state.timeline) || 'PRESENT';
+
+        for (let i = 0; i < this.list.length; i++) {
+            const e = this.list[i];
+            if (!e || e.dead || e.hp <= 0) continue;
+            if (!e.isBoss && e.timeline !== currentTimeline) continue;
+
+            const isSniperUnit = e.subType === 'sniper_robot' || e.subType === 'shaman' || e.isMiniBoss;
+            if (isSniperUnit && e.shootCd > 0 && e.shootCd <= 0.65) {
+                const sx = e.x - camX;
+                const sy = e.y - camY;
+                const targetX = player.x - camX;
+                const targetY = player.y - camY;
+                const aimAngle = Math.atan2(targetY - sy, targetX - sx);
+
+                const pulse = 0.5 + Math.sin(now * 25) * 0.5;
+                ctx.globalAlpha = 0.5 + pulse * 0.5;
+
+                ctx.beginPath();
+                ctx.moveTo(sx, sy);
+                const rayLen = 650;
+                ctx.lineTo(sx + Math.cos(aimAngle) * rayLen, sy + Math.sin(aimAngle) * rayLen);
+                ctx.stroke();
+
+                // Biểu tượng cảnh báo đầu nòng
+                ctx.beginPath();
+                ctx.arc(sx + Math.cos(aimAngle) * (e.radius + 8), sy + Math.sin(aimAngle) * (e.radius + 8), 4 + pulse * 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        ctx.restore();
+    },
+
+    /**
+     * VẼ ĐỒ HỌA TOÀN BỘ ENEMY ENGINE (TÍCH HỢP CHẾ ĐỘ 120HZ / ULTRA PERFORMANCE TOGGLE V.8)
+     */
     draw: function (ctx, camera) {
         const state = window.Game.state;
         const currentTimeline = (state && state.timeline) || 'PRESENT';
-        const isFrozen = Boolean(state && state.chronoFreezeTimer > 0);
+        const isChronoFrozen = Boolean(state && state.chronoFreezeTimer > 0);
+        const lowGraphics = Boolean(state && state.lowGraphicsMode);
         const camX = (camera && camera.x) || 0;
         const camY = (camera && camera.y) || 0;
         const camW = (camera && camera.width) || window.innerWidth || 1280;
@@ -2790,6 +3146,27 @@ window.Game.Enemies = {
         ctx.save();
 
         this._drawTelegraphs(ctx, camX, camY, now);
+        this._drawSniperScopeWarnings(ctx, camX, camY, now);
+
+        // Hiệu ứng vụ nổ xác quái (Corpse Explosion - II.9)
+        for (let i = 0; i < this.corpseExplosions.length; i++) {
+            const ce = this.corpseExplosions[i];
+            const sx = ce.x - camX;
+            const sy = ce.y - camY;
+            const progress = 1 - Math.max(0, ce.life / ce.maxLife);
+
+            ctx.save();
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 3 * (1 - progress);
+            ctx.globalAlpha = Math.max(0, 1 - progress);
+            ctx.beginPath();
+            ctx.arc(sx, sy, ce.radius * progress, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.25)';
+            ctx.fill();
+            ctx.restore();
+        }
 
         // Hiệu ứng sóng hồi máu / chấn động
         for (let i = 0; i < this.healWaves.length; i++) {
@@ -2799,13 +3176,15 @@ window.Game.Enemies = {
             ctx.save();
             ctx.globalAlpha = Math.max(0, hw.alpha);
             ctx.strokeStyle = hw.color;
-            ctx.lineWidth = 4;
+            ctx.lineWidth = 3.5;
             ctx.beginPath();
             ctx.arc(sx, sy, hw.radius, 0, Math.PI * 2);
             ctx.stroke();
-            ctx.fillStyle = hw.color;
-            ctx.globalAlpha = Math.max(0, hw.alpha * 0.25);
-            ctx.fill();
+            if (!lowGraphics) {
+                ctx.fillStyle = hw.color;
+                ctx.globalAlpha = Math.max(0, hw.alpha * 0.22);
+                ctx.fill();
+            }
             ctx.restore();
         }
 
@@ -2821,21 +3200,23 @@ window.Game.Enemies = {
 
                 ctx.save();
                 ctx.globalAlpha = alpha;
-                ctx.shadowColor = '#10b981';
-                ctx.shadowBlur = 12;
+                if (!lowGraphics) {
+                    ctx.shadowColor = '#10b981';
+                    ctx.shadowBlur = 10;
+                }
                 ctx.strokeStyle = '#34d399';
-                ctx.lineWidth = 4 * alpha + 1.5;
+                ctx.lineWidth = 3 * alpha + 1.2;
                 ctx.beginPath();
                 ctx.moveTo(x1, y1);
-                const midX = (x1 + x2) * 0.5 + Math.sin(now * 18 + i) * 12;
-                const midY = (y1 + y2) * 0.5 + Math.cos(now * 18 + i) * 12;
+                const midX = (x1 + x2) * 0.5 + Math.sin(now * 18 + i) * 10;
+                const midY = (y1 + y2) * 0.5 + Math.cos(now * 18 + i) * 10;
                 ctx.quadraticCurveTo(midX, midY, x2, y2);
                 ctx.stroke();
                 ctx.restore();
             }
         }
 
-        // Vẽ vệt bóng mờ khi quái lướt ngang né tia ngắm (Evasive Sidestep Afterimages)
+        // Vệt bóng mờ né tia ngắm (Evasive Sidestep)
         for (let i = 0; i < this.evadeAfterimages.length; i++) {
             const af = this.evadeAfterimages[i];
             const sx = af.x - camX;
@@ -2846,7 +3227,7 @@ window.Game.Enemies = {
             ctx.globalAlpha = alpha;
             ctx.fillStyle = af.color;
             ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 1.5;
+            ctx.lineWidth = 1.2;
             ctx.beginPath();
             ctx.arc(sx, sy, af.radius * 0.92, 0, Math.PI * 2);
             ctx.fill();
@@ -2854,7 +3235,7 @@ window.Game.Enemies = {
             ctx.restore();
         }
 
-        // Hiệu ứng nảy bật tia lửa / Lục giác phản chấn khiên
+        // Hiệu ứng nảy bật tia lửa / lục giác khiên
         for (let i = 0; i < this.shieldDeflections.length; i++) {
             const sd = this.shieldDeflections[i];
             const sx = sd.x - camX;
@@ -2865,29 +3246,31 @@ window.Game.Enemies = {
             ctx.translate(sx, sy);
             ctx.rotate(sd.angle);
             ctx.globalAlpha = alpha;
-            ctx.shadowColor = sd.color;
-            ctx.shadowBlur = 12;
+            if (!lowGraphics) {
+                ctx.shadowColor = sd.color;
+                ctx.shadowBlur = 10;
+            }
 
             ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2.5;
+            ctx.lineWidth = 2.0;
             for (let sp = -1; sp <= 1; sp++) {
                 ctx.beginPath();
                 ctx.moveTo(0, 0);
-                ctx.lineTo(16 * alpha, sp * 14 * (1 - alpha));
+                ctx.lineTo(15 * alpha, sp * 12 * (1 - alpha));
                 ctx.stroke();
             }
 
             ctx.strokeStyle = sd.color;
-            ctx.lineWidth = 3;
+            ctx.lineWidth = 2.5;
             ctx.beginPath();
-            ctx.arc(0, 0, 18 * (1.4 - alpha), -Math.PI * 0.35, Math.PI * 0.35);
+            ctx.arc(0, 0, 16 * (1.4 - alpha), -Math.PI * 0.35, Math.PI * 0.35);
             ctx.stroke();
             ctx.restore();
         }
 
         this._drawLootDrops(ctx, camX, camY, now);
 
-        // Vẽ đạn (Bao gồm cả tia laser phản xạ và mảnh vỡ khiên)
+        // Vẽ đường đạn
         for (let i = 0; i < this.projectiles.length; i++) {
             const p = this.projectiles[i];
             const sx = p.x - camX;
@@ -2896,9 +3279,11 @@ window.Game.Enemies = {
             if (sx < -50 || sx > camW + 50 || sy < -50 || sy > camH + 50) continue;
 
             ctx.save();
-            ctx.shadowColor = isFrozen ? '#22d3ee' : p.color;
-            ctx.shadowBlur = p.isReflectedLaser ? 16 : 10;
-            ctx.fillStyle = isFrozen ? '#67e8f9' : p.color;
+            if (!lowGraphics) {
+                ctx.shadowColor = isChronoFrozen ? '#22d3ee' : p.color;
+                ctx.shadowBlur = p.isReflectedLaser ? 14 : 8;
+            }
+            ctx.fillStyle = isChronoFrozen ? '#67e8f9' : p.color;
 
             if (p.isReflectedLaser) {
                 const angle = Math.atan2(p.vy, p.vx);
@@ -2921,16 +3306,16 @@ window.Game.Enemies = {
             ctx.restore();
         }
 
-        // Vẽ đường liên kết chiến thuật khi Kiter đang nấp sau lưng Tanker
+        // Đường liên kết Kiter nấp sau Tanker
         for (let i = 0; i < this.list.length; i++) {
             const e = this.list[i];
             if (!e.dead && e.hp > 0 && e.timeline === currentTimeline && e.synergyTankerId) {
                 const protector = this.list.find(t => t.id === e.synergyTankerId && !t.dead && t.hp > 0);
                 if (protector) {
                     ctx.save();
-                    ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
-                    ctx.lineWidth = 2;
-                    ctx.setLineDash([6, 4]);
+                    ctx.strokeStyle = 'rgba(56, 189, 248, 0.40)';
+                    ctx.lineWidth = 1.8;
+                    ctx.setLineDash([5, 4]);
                     ctx.beginPath();
                     ctx.moveTo(e.x - camX, e.y - camY);
                     ctx.lineTo(protector.x - camX, protector.y - camY);
@@ -2941,7 +3326,7 @@ window.Game.Enemies = {
             }
         }
 
-        // Vẽ Quái, Mini-Boss & Boss
+        // Vẽ thực thể Quái, Mini-Boss & Boss
         for (let i = 0; i < this.list.length; i++) {
             const e = this.list[i];
 
@@ -2953,9 +3338,9 @@ window.Game.Enemies = {
                     ctx.save();
                     ctx.translate(bsx, bsy);
                     ctx.strokeStyle = e.isBoss ? 'rgba(168, 85, 247, 0.55)' : 'rgba(244, 63, 94, 0.55)';
-                    ctx.lineWidth = 3;
+                    ctx.lineWidth = 2.5;
                     ctx.beginPath();
-                    ctx.arc(0, 0, (e.isBoss ? 48 : 34) + Math.sin(now * 5) * 5, 0, Math.PI * 2);
+                    ctx.arc(0, 0, (e.isBoss ? 48 : 34) + Math.sin(now * 5) * 4, 0, Math.PI * 2);
                     ctx.stroke();
 
                     ctx.fillStyle = e.isBoss ? '#e879f9' : '#fda4af';
@@ -2981,14 +3366,17 @@ window.Game.Enemies = {
             ctx.save();
             ctx.translate(sx, sy);
 
-            if (e.isMiniBoss) {
-                this._drawMiniBossAura(ctx, e, now);
-            } else if (e.isElite) {
-                this._drawEliteAura(ctx, e, now);
+            // TÍNH NĂNG 9: V.8 Giản lược vòng hào quang phụ khi bật lowGraphicsMode để đạt 120 FPS
+            if (!lowGraphics) {
+                if (e.isMiniBoss) {
+                    this._drawMiniBossAura(ctx, e, now);
+                } else if (e.isElite) {
+                    this._drawEliteAura(ctx, e, now);
+                }
             }
 
-            // Bóng tròn chân
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.38)';
+            // Bóng chân
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
             ctx.beginPath();
             ctx.ellipse(0, e.radius * 0.85, e.radius * 0.9, e.radius * 0.42, 0, 0, Math.PI * 2);
             ctx.fill();
@@ -3005,8 +3393,14 @@ window.Game.Enemies = {
                 this._drawRobotEnemy(ctx, e, now);
             }
 
-            if (isFrozen) {
+            // TÍNH NĂNG 4: Vẽ hiệu ứng Tinh Thể Băng bao phủ khi bị dính freezeTimer từ Trái Tim Băng Giá (I.5)
+            if (isChronoFrozen || (e.freezeTimer && e.freezeTimer > 0)) {
                 this._drawFrozenCrystalOverlay(ctx, e);
+            }
+
+            // TÍNH NĂNG 3: Vẽ hiệu ứng Vệt Lửa bốc cháy khi giẫm vào Aero Boots (I.3)
+            if (e.burnTimer && e.burnTimer > 0) {
+                this._drawBurnFireOverlay(ctx, e, now);
             }
 
             if (e.isMiniBoss) {
@@ -3067,7 +3461,7 @@ window.Game.Enemies = {
                 const flashPulse = 0.5 + Math.sin(now * 22) * 0.5;
 
                 ctx.strokeStyle = ringColor;
-                ctx.lineWidth = 4 + flashPulse * 3;
+                ctx.lineWidth = 3.5 + flashPulse * 2.5;
                 ctx.globalAlpha = 0.6 + flashPulse * 0.4;
                 ctx.setLineDash([14, 8]);
                 ctx.beginPath();
@@ -3080,6 +3474,8 @@ window.Game.Enemies = {
     },
 
     _drawLootDrops: function (ctx, camX, camY, now) {
+        const lowGraphics = Boolean(window.Game.state && window.Game.state.lowGraphicsMode);
+
         for (let i = 0; i < this.lootDrops.length; i++) {
             const item = this.lootDrops[i];
             const sx = item.x - camX;
@@ -3093,8 +3489,10 @@ window.Game.Enemies = {
             ctx.fill();
 
             if (item.type === 'GOLD') {
-                ctx.shadowColor = '#facc15';
-                ctx.shadowBlur = 10;
+                if (!lowGraphics) {
+                    ctx.shadowColor = '#facc15';
+                    ctx.shadowBlur = 8;
+                }
                 ctx.fillStyle = '#facc15';
                 ctx.strokeStyle = '#ca8a04';
                 ctx.lineWidth = 2;
@@ -3109,8 +3507,10 @@ window.Game.Enemies = {
                 ctx.textBaseline = 'middle';
                 ctx.fillText('G', sx, sy + bob + 0.5);
             } else if (item.type === 'HP_ORB') {
-                ctx.shadowColor = '#f43f5e';
-                ctx.shadowBlur = 12;
+                if (!lowGraphics) {
+                    ctx.shadowColor = '#f43f5e';
+                    ctx.shadowBlur = 10;
+                }
                 ctx.fillStyle = '#f43f5e';
                 ctx.beginPath();
                 ctx.arc(sx, sy + bob, 8.5, 0, Math.PI * 2);
@@ -3120,8 +3520,10 @@ window.Game.Enemies = {
                 ctx.fillRect(sx - 4, sy + bob - 1.2, 8, 2.4);
                 ctx.fillRect(sx - 1.2, sy + bob - 4, 2.4, 8);
             } else if (item.type === 'EXP_ORB') {
-                ctx.shadowColor = '#38bdf8';
-                ctx.shadowBlur = 12;
+                if (!lowGraphics) {
+                    ctx.shadowColor = '#38bdf8';
+                    ctx.shadowBlur = 10;
+                }
                 ctx.fillStyle = '#38bdf8';
                 ctx.strokeStyle = '#c084fc';
                 ctx.lineWidth = 2;
@@ -3137,8 +3539,10 @@ window.Game.Enemies = {
                 const cy = sy + bob;
                 ctx.save();
                 ctx.translate(sx, cy);
-                ctx.shadowColor = '#00f2fe';
-                ctx.shadowBlur = 15;
+                if (!lowGraphics) {
+                    ctx.shadowColor = '#00f2fe';
+                    ctx.shadowBlur = 12;
+                }
                 ctx.fillStyle = '#0284c7';
                 ctx.strokeStyle = '#7dd3fc';
                 ctx.lineWidth = 2;
@@ -3161,13 +3565,14 @@ window.Game.Enemies = {
                 ctx.fill();
                 ctx.restore();
             } else if (item.type === 'OVERDRIVE_ORB') {
-                // Ngọc Cuồng Nộ Đỏ Cam
                 const cy = sy + bob;
                 ctx.save();
                 ctx.translate(sx, cy);
                 ctx.rotate(now * 3.5);
-                ctx.shadowColor = '#ff5722';
-                ctx.shadowBlur = 16;
+                if (!lowGraphics) {
+                    ctx.shadowColor = '#ff5722';
+                    ctx.shadowBlur = 14;
+                }
 
                 ctx.fillStyle = '#ea580c';
                 ctx.strokeStyle = '#fde047';
@@ -3196,9 +3601,10 @@ window.Game.Enemies = {
                 ctx.save();
                 ctx.translate(sx, cy);
                 ctx.rotate(Math.sin(now * 3 + i) * 0.25);
-
-                ctx.shadowColor = '#d946ef';
-                ctx.shadowBlur = 16;
+                if (!lowGraphics) {
+                    ctx.shadowColor = '#d946ef';
+                    ctx.shadowBlur = 14;
+                }
                 ctx.fillStyle = '#d946ef';
                 ctx.strokeStyle = '#f5d0fe';
                 ctx.lineWidth = 2;
@@ -3220,9 +3626,6 @@ window.Game.Enemies = {
         }
     },
 
-    /**
-     * HÀO QUANG TÍM ĐỎ ĐẶC TRƯNG CỦA 3 BOSS PHỤ KỶ NGUYÊN (isMiniBoss)
-     */
     _drawMiniBossAura: function (ctx, e, now) {
         const spikes = 16;
         const outerR = e.radius + 16 + Math.sin(now * 9) * 3;
@@ -3248,14 +3651,9 @@ window.Game.Enemies = {
         ctx.restore();
     },
 
-    /**
-     * VƯƠNG MIỆN ĐỎ TÍM CỦA BOSS PHỤ KỶ NGUYÊN
-     */
     _drawMiniBossCrown: function (ctx, e, now) {
         const cy = -e.radius - 26;
         ctx.save();
-        ctx.shadowColor = '#f43f5e';
-        ctx.shadowBlur = 10;
         ctx.fillStyle = '#f43f5e';
         ctx.strokeStyle = '#fde047';
         ctx.lineWidth = 1.8;
@@ -3279,16 +3677,11 @@ window.Game.Enemies = {
         ctx.restore();
     },
 
-    /**
-     * VẼ NGOẠI HÌNH RIÊNG BIỆT CHO 3 MINI-BOSS KỶ NGUYÊN
-     */
     _drawMiniBossBody: function (ctx, e, now) {
         const r = e.radius;
         const face = e.facingAngle || 0;
 
-        // 1. PAST MINI-BOSS: Cự Thạch Hộ Pháp
         if (e.subType === 'ancient_miniboss') {
-            // Vòng giáp đá quay xung quanh giảm 60% sát thương tầm xa
             ctx.save();
             ctx.rotate(now * 1.6);
             for (let k = 0; k < 6; k++) {
@@ -3313,7 +3706,6 @@ window.Game.Enemies = {
             ctx.fill();
             ctx.stroke();
 
-            // Lõi cổ ngữ phát sáng giữa ngực
             ctx.fillStyle = '#fbbf24';
             ctx.beginPath();
             ctx.moveTo(0, -12);
@@ -3322,9 +3714,7 @@ window.Game.Enemies = {
             ctx.lineTo(-10, 0);
             ctx.closePath();
             ctx.fill();
-        }
-        // 2. PRESENT MINI-BOSS: Mẫu Hoàng Độc Tố
-        else if (e.subType === 'mutant_miniboss') {
+        } else if (e.subType === 'mutant_miniboss') {
             const pulse = Math.sin(now * 7) * 2.5;
             ctx.fillStyle = e.hitFlash > 0 ? '#ffffff' : '#701a75';
             ctx.strokeStyle = '#a3e635';
@@ -3334,7 +3724,6 @@ window.Game.Enemies = {
             ctx.fill();
             ctx.stroke();
 
-            // Các túi độc axit quanh thân Mẫu Hoàng
             for (let b = 0; b < 5; b++) {
                 const ba = face + (b * Math.PI * 2) / 5 + now * 1.2;
                 const bx = Math.cos(ba) * (r * 0.62);
@@ -3344,9 +3733,7 @@ window.Game.Enemies = {
                 ctx.arc(bx, by, 5.5, 0, Math.PI * 2);
                 ctx.fill();
             }
-        }
-        // 3. FUTURE MINI-BOSS: Chiến Giáp Phản Quang
-        else if (e.subType === 'robot_miniboss') {
+        } else if (e.subType === 'robot_miniboss') {
             ctx.fillStyle = e.hitFlash > 0 ? '#ffffff' : '#0f172a';
             ctx.strokeStyle = '#00f2fe';
             ctx.lineWidth = 4;
@@ -3355,19 +3742,15 @@ window.Game.Enemies = {
             ctx.fill();
             ctx.stroke();
 
-            // Lõi Lượng Tử
             ctx.fillStyle = e.mirrorShieldActive ? '#ff0844' : '#38bdf8';
             ctx.beginPath();
             ctx.arc(0, 0, 10, 0, Math.PI * 2);
             ctx.fill();
 
-            // Hiệu ứng Khiên Gương Lượng Tử đang bật (Phản xạ đạn súng)
             if (e.mirrorShieldActive) {
                 ctx.save();
-                ctx.shadowColor = '#00f2fe';
-                ctx.shadowBlur = 20;
                 ctx.strokeStyle = '#e0f2fe';
-                ctx.lineWidth = 4.5;
+                ctx.lineWidth = 4.0;
 
                 const shieldR = r + 14 + Math.sin(now * 16) * 2;
                 ctx.beginPath();
@@ -3435,9 +3818,9 @@ window.Game.Enemies = {
     },
 
     _drawFrozenCrystalOverlay: function (ctx, e) {
-        const r = e.radius + 5;
+        const r = e.radius + 6;
         ctx.save();
-        ctx.fillStyle = 'rgba(34, 211, 238, 0.48)';
+        ctx.fillStyle = 'rgba(34, 211, 238, 0.52)';
         ctx.strokeStyle = '#cffafe';
         ctx.lineWidth = 2.5;
 
@@ -3452,6 +3835,36 @@ window.Game.Enemies = {
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        for (let j = 0; j < 3; j++) {
+            const ja = (j * Math.PI) / 3;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(ja) * r, Math.sin(ja) * r);
+            ctx.lineTo(-Math.cos(ja) * r, -Math.sin(ja) * r);
+            ctx.stroke();
+        }
+
+        ctx.restore();
+    },
+
+    /**
+     * VẼ HIỆU ỨNG ĐỐT CHÁY KHI GIẪM VÀO VỆT LỬA AERO BOOTS (I.3)
+     */
+    _drawBurnFireOverlay: function (ctx, e, now) {
+        const r = e.radius;
+        ctx.save();
+        for (let f = 0; f < 4; f++) {
+            const fa = now * 12 + (f * Math.PI) / 2;
+            const fx = Math.cos(fa) * (r * 0.7);
+            const fy = Math.sin(fa) * (r * 0.7) - (r * 0.3);
+
+            ctx.fillStyle = f % 2 === 0 ? '#ef4444' : '#f59e0b';
+            ctx.beginPath();
+            ctx.arc(fx, fy, 4 + Math.sin(now * 15 + f) * 1.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
         ctx.restore();
     },
 
@@ -3479,7 +3892,6 @@ window.Game.Enemies = {
             ctx.fill();
             ctx.stroke();
 
-            // Khối Khiên Đá Vòng Cung 120° (±60° quanh facingAngle)
             ctx.save();
             ctx.strokeStyle = '#d97706';
             ctx.lineWidth = 5;
@@ -3587,20 +3999,14 @@ window.Game.Enemies = {
         ctx.stroke();
 
         ctx.fillStyle = e.isTanker ? '#38bdf8' : '#ff0844';
-        ctx.shadowColor = ctx.fillStyle;
-        ctx.shadowBlur = 8;
         ctx.beginPath();
         ctx.arc(0, 0, 6.5, 0, Math.PI * 2);
         ctx.fill();
-        ctx.shadowBlur = 0;
 
         if (e.isTanker && e.shieldActive) {
             const shieldDist = r + 11;
 
             ctx.save();
-            ctx.shadowColor = '#00f2fe';
-            ctx.shadowBlur = 14;
-
             ctx.strokeStyle = '#38bdf8';
             ctx.lineWidth = 4;
             ctx.beginPath();
@@ -3655,8 +4061,6 @@ window.Game.Enemies = {
 
         ctx.save();
         const shieldRadius = r + 20 + Math.sin(now * 6) * 3;
-        ctx.shadowColor = shieldColor;
-        ctx.shadowBlur = isOutOfPhase ? 22 : 10;
 
         ctx.fillStyle = shieldColor;
         ctx.globalAlpha = isOutOfPhase ? 0.22 : 0.08;
@@ -3666,7 +4070,7 @@ window.Game.Enemies = {
 
         ctx.globalAlpha = isOutOfPhase ? 0.95 : 0.65;
         ctx.strokeStyle = shieldColor;
-        ctx.lineWidth = isOutOfPhase ? 5.5 : 3.5;
+        ctx.lineWidth = isOutOfPhase ? 5.0 : 3.2;
         for (let k = 0; k < 3; k++) {
             const startA = now * 1.8 + (k * Math.PI * 2) / 3;
             ctx.beginPath();
@@ -3809,7 +4213,6 @@ window.Game.Enemies = {
             ctx.lineWidth = 2;
             ctx.strokeRect(bx - 2, by - 2, barW + 4, barH + 4);
         } else if (e.isMiniBoss) {
-            // Thanh máu nổi bật dành riêng cho 3 Boss Phụ Kỷ Nguyên
             const barW = 148;
             const barH = 10;
             const bx = -barW / 2;

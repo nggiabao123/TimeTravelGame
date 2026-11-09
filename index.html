@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <title>Kẻ Du Hành Thời Không - Time Traveler 2D</title>
 
-  <!-- Khai báo Web App Manifest cho Android & Chrome -->
+  <!-- Khai báo Web App Manifest cho Android & PWA -->
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#050811">
 
@@ -19,16 +19,135 @@
   <link rel="stylesheet" href="style.css">
   <link rel="shortcut icon" href="data:image/x-icon;," type="image/x-icon">
   <link rel="icon" type="image/jpeg" href="./chem_2.jpg">
+
+  <style>
+    /* BỔ TRỢ KIẾN TRÚC UI MOBILE & BẢN VÁ LỖI TRÀN MÀN HÌNH */
+    .mobile-modal-scaffold {
+      display: flex;
+      flex-direction: column;
+      max-height: 92vh;
+      width: 95%;
+      max-width: 650px;
+      margin: auto;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 242, 254, 0.3);
+      border: 1px solid rgba(0, 242, 254, 0.35);
+      background: linear-gradient(180deg, rgba(13, 20, 36, 0.96) 0%, rgba(5, 8, 17, 0.98) 100%);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    .modal-fixed-header {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 18px;
+      background: rgba(10, 16, 30, 0.85);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      z-index: 10;
+    }
+
+    .btn-quick-close-large {
+      padding: 8px 16px;
+      min-height: 44px;
+      min-width: 44px;
+      background: linear-gradient(135deg, #ff416c, #ff4b2b);
+      color: #ffffff;
+      font-weight: 800;
+      font-size: 14px;
+      letter-spacing: 0.5px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 10px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px rgba(255, 75, 43, 0.4);
+      touch-action: manipulation;
+    }
+
+    .modal-scrollable-body {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      overflow-x: hidden;
+      touch-action: pan-y;
+      -webkit-overflow-scrolling: touch;
+      padding: 16px;
+      overscroll-behavior: contain;
+    }
+
+    .modal-fixed-footer {
+      flex-shrink: 0;
+      padding: 10px 18px;
+      background: rgba(10, 16, 30, 0.92);
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      z-index: 10;
+    }
+
+    /* Hệ thống Toast thông báo thời gian thực */
+    #game-toast-container {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 99999;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+      width: 90%;
+      max-width: 420px;
+    }
+
+    .game-toast {
+      padding: 10px 18px;
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid #00f2fe;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 13px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 12px rgba(0, 242, 254, 0.4);
+      animation: toastFadeIn 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
+      text-align: center;
+    }
+
+    @keyframes toastFadeIn {
+      from { opacity: 0; transform: translateY(-15px) scale(0.95); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    /* Quick Action Button Bar trên Mobile */
+    .feature-hub-btn-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .feature-hub-btn-grid .icon-action-btn {
+      padding: 6px 10px;
+      font-size: 12px;
+      border-radius: 8px;
+    }
+  </style>
 </head>
 <body>
 
-  <!-- Lớp Canvas Chính (Radar Minimap được vẽ ở góc trên trái x=12, y=12 trong world.js) -->
+  <!-- Canvas hiển thị đồ họa game chính -->
   <canvas id="gameCanvas"></canvas>
 
   <!-- Hiệu ứng chớp sáng toàn màn hình khi dịch chuyển Thời Không -->
   <div id="time-flash"></div>
 
-  <!-- Lớp Giao Diện Người Dùng (UI Overlay) -->
+  <!-- Vùng hiển thị thông báo nổi nhanh (HUD Toasts) -->
+  <div id="game-toast-container"></div>
+
+  <!-- Lớp Giao Diện Người Dùng (UI Overlay Layer) -->
   <div id="ui-layer">
 
     <!-- 1. GÓC TRÊN TRÁI (CLEAN HUD): TIỀN TỆ & CHIẾN LỰC THỜI KHÔNG -->
@@ -68,42 +187,89 @@
       </div>
     </div>
 
-    <!-- 3. GÓC TRÊN PHẢI: CỤM NÚT GỌN GÀNG, HỆ THỐNG NÚT QUẢN TRỊ & MENU THU GỌN -->
+    <!-- 3. GÓC TRÊN PHẢI: TRUNG TÂM NÚT ĐIỀU HÀNH 50 TÍNH NĂNG MỚI & TIỆN ÍCH -->
     <div class="hud-top-right secondary-hud-widget">
-      <div class="top-right-main-row">
-        <!-- NÚT BẬT/TẮT ĐỒ HỌA THẤP (CHỐNG LAG MOBILE) -->
-        <button type="button" id="btn-low-graphics" class="glass-panel icon-action-btn" onclick="Game.UI.toggleLowGraphics()" title="Bật/Tắt Chế độ Đồ họa Thấp để mượt hơn">
+      <div class="top-right-main-row feature-hub-btn-grid">
+        
+        <!-- V.8: Nút bật/tắt 120Hz/Siêu Mượt -->
+        <button type="button" id="btn-ultra-performance" class="glass-panel icon-action-btn" onclick="Game.UI.toggleUltraFps()" title="Chế độ 120Hz / Khử giật lag">
+          <span class="btn-icon">🚀</span>
+          <span id="lbl-ultra-performance" class="shop-label">120Hz: TẮT</span>
+        </button>
+
+        <!-- V.10: Nút bật/tắt Rung Phản Hồi Xúc Giác (Haptic) -->
+        <button type="button" id="btn-haptic-toggle" class="glass-panel icon-action-btn" onclick="Game.UI.toggleHaptics()" title="Rung phản hồi khi ra chiêu hoặc nhận sát thương">
+          <span class="btn-icon">📳</span>
+          <span id="lbl-haptic-status" class="shop-label">RUNG: BẬT</span>
+        </button>
+
+        <!-- Nút Đồ Họa Thấp -->
+        <button type="button" id="btn-low-graphics" class="glass-panel icon-action-btn" onclick="Game.UI.toggleLowGraphics()" title="Bật/Tắt Chế độ Đồ họa Thấp">
           <span class="btn-icon">⚡</span>
           <span id="lbl-low-graphics" class="shop-label">MƯỢT: TẮT</span>
         </button>
 
-        <!-- NÚT ADMIN PANEL (ẨN MẶC ĐỊNH, CHỈ HIỆN KHI LÀ TÀI KHOẢN ADMIN) -->
-        <button type="button" id="btn-open-admin-panel" class="glass-panel icon-action-btn hidden" onclick="Game.UI.toggleAdminPanel(true)" title="Mở Bảng Điều Khiển Quản Trị Viên">
-          <span class="btn-icon">🛡️</span>
-          <span class="shop-label">ADMIN</span>
+        <!-- V.6: Nút Thử Thách Hằng Ngày -->
+        <button type="button" id="btn-open-bounties" class="glass-panel icon-action-btn" onclick="Game.UI.toggleBountiesPanel(true)" title="Thử Thách Hằng Ngày">
+          <span class="btn-icon">📜</span>
+          <span class="shop-label">NHIỆM VỤ</span>
         </button>
 
+        <!-- V.3: Nút Bảng Thiên Phú -->
+        <button type="button" id="btn-open-talents" class="glass-panel icon-action-btn" onclick="Game.UI.toggleTalentModal(true)" title="Bảng Bổ Trợ Thiên Phú">
+          <span class="btn-icon">🧬</span>
+          <span class="shop-label">THIÊN PHÚ</span>
+        </button>
+
+        <!-- V.7: Nút Kho Danh Hiệu -->
+        <button type="button" id="btn-open-titles" class="glass-panel icon-action-btn" onclick="Game.UI.toggleTitlesModal(true)" title="Kho Danh Hiệu Kèm Hiệu Ứng">
+          <span class="btn-icon">👑</span>
+          <span class="shop-label">DANH HIỆU</span>
+        </button>
+
+        <!-- V.4: Nút Leo Tháp Vô Tận -->
+        <button type="button" id="btn-open-abyss" class="glass-panel icon-action-btn" onclick="Game.UI.toggleAbyssModal(true)" title="Vực Thẳm Vô Tận (Leo Tháp)">
+          <span class="btn-icon">🌀</span>
+          <span class="shop-label">LEO THÁP</span>
+        </button>
+
+        <!-- V.5: Nút Bảng Xếp Hạng -->
+        <button type="button" id="btn-open-leaderboard" class="glass-panel icon-action-btn" onclick="Game.UI.toggleLeaderboardModal(true)" title="Bảng Xếp Hạng Chiến Lực Trực Tuyến">
+          <span class="btn-icon">🏆</span>
+          <span class="shop-label">BXH</span>
+        </button>
+
+        <!-- Nút Chọn Nhân Vật (Đã vá lỗi) -->
         <button type="button" id="btn-open-char-modal" class="glass-panel icon-action-btn" onclick="Game.UI.toggleCharModal(true)" title="Đổi Nhân Vật">
           <span class="btn-icon">🦸</span>
           <span class="shop-label">NHÂN VẬT</span>
         </button>
 
-        <button type="button" id="btn-open-hud-customizer" class="glass-panel icon-action-btn" onclick="Game.Controls.toggleEditMode()" title="Tùy chỉnh vị trí nút điều khiển">
-          <span class="btn-icon">⚙️</span>
-          <span class="shop-label">CÀI ĐẶT NÚT</span>
-        </button>
-
+        <!-- Cửa Hàng Trang Bị, Cổ Vật, Tinh Linh & Hiệu Ứng -->
         <button type="button" id="btn-shop" class="glass-panel shop-trigger-btn" onclick="Game.Systems.toggleShop()">
           <span class="shop-icon">🛒</span>
           <span class="shop-label">CỬA HÀNG</span>
         </button>
 
-        <!-- NÚT ĐĂNG XUẤT (LOGOUT) TRÊN HUD -->
-        <button type="button" id="btn-hud-logout" class="glass-panel icon-action-btn" onclick="if(Game.Systems.logout) Game.Systems.logout(); else location.reload();" title="Đăng Xuất Tài Khoản">
-          <span class="btn-icon">🚪</span>
-          <span class="shop-label">ĐĂNG XUẤT</span>
+        <!-- Nút Quản Trị Viên (Admin) -->
+        <button type="button" id="btn-open-admin-panel" class="glass-panel icon-action-btn hidden" onclick="Game.UI.toggleAdminPanel(true)" title="Mở Bảng Điều Khiển Quản Trị Viên">
+          <span class="btn-icon">🛡️</span>
+          <span class="shop-label">ADMIN</span>
         </button>
 
+        <!-- Cài Đặt Nút Điều Khiển -->
+        <button type="button" id="btn-open-hud-customizer" class="glass-panel icon-action-btn" onclick="Game.Controls.toggleEditMode()" title="Tùy chỉnh vị trí nút điều khiển">
+          <span class="btn-icon">⚙️</span>
+          <span class="shop-label">NÚT BẤM</span>
+        </button>
+
+        <!-- Nút Đăng Xuất -->
+        <button type="button" id="btn-hud-logout" class="glass-panel icon-action-btn" onclick="if(Game.Systems.logout) Game.Systems.logout(); else location.reload();" title="Đăng Xuất Tài Khoản">
+          <span class="btn-icon">🚪</span>
+          <span class="shop-label">THOÁT</span>
+        </button>
+
+        <!-- Menu Thu Gọn -->
         <button type="button" id="btn-compact-menu" class="glass-panel compact-menu-trigger" onclick="Game.UI.toggleCompactDrawer()" aria-label="Menu Thu Gọn" title="Mở bảng Thông tin, Nhiệm vụ & Dịch chuyển">
           <span class="hamburger-icon">☰</span>
           <span class="notify-dot"></span>
@@ -114,7 +280,7 @@
     <!-- 4. BẢNG TRƯỢT MENU THU GỌN (#compact-info-drawer) -->
     <div id="compact-info-drawer" class="glass-panel compact-drawer">
       <div class="drawer-header">
-        <span class="drawer-title">◈ THÔNG TIN & NHIỆM VỤ</span>
+        <span class="drawer-title">◈ THÔNG TIN &amp; TRẠNG THÁI</span>
         <button type="button" class="btn-close-drawer" onclick="Game.UI.toggleCompactDrawer(false)" aria-label="Đóng">✕</button>
       </div>
 
@@ -130,9 +296,16 @@
         </div>
       </div>
 
+      <!-- Lối tắt xem Thống kê Sát Thương (V.9) -->
+      <div class="drawer-section">
+        <button type="button" class="btn-action" style="width: 100%; padding: 8px;" onclick="Game.UI.toggleCombatRecapModal(true)">
+          📊 Xem Báo Cáo Sát Thương Trận Đấu
+        </button>
+      </div>
+
       <div class="drawer-section waypoint-hud-panel" id="hud-waypoint-panel">
         <div class="panel-header-row" onclick="this.parentElement.classList.toggle('collapsed')">
-          <span class="panel-title">CỔNG DỊCH CHUYỂN</span>
+          <span class="panel-title">CỔNG DỊCH CHUYỂN TỨC THỜI</span>
           <span class="collapse-toggle-icon">▼</span>
         </div>
         <div class="collapsible-content">
@@ -162,13 +335,12 @@
         </div>
       </div>
 
-      <!-- DÒNG GỢI Ý CƠ CHẾ CHIẾN ĐẤU MỚI -->
       <div class="drawer-tip-box">
-        💡 Mẹo: Vũ khí Cận Chiến chém tan đạn &amp; x1.45 ST sau lưng | Súng cần ngắm góc hẹp (±15°)
+        💡 Mẹo: Cận chiến đánh lén sau lưng nhận x1.45 ST. Nhấn nút 120Hz để loại bỏ giật lag trên mobile cao cấp.
       </div>
     </div>
 
-    <!-- 5. CHÍNH GIỮA PHÍA DƯỚI: CỤM THANH NỘ, GIÁP, MÁU & EXP -->
+    <!-- 5. CHÍNH GIỮA PHÍA DƯỚI: THANH NỘ, KHIÊN, MÁU & KINH NGHIỆM -->
     <div class="hud-bottom-center">
       <div class="bar-wrapper rage-wrapper" onclick="Game.Systems.activateChronoFreeze()" title="Khi đầy 100% có thể kích hoạt Ngưng Đọng Thời Gian">
         <div class="bar-track">
@@ -199,17 +371,21 @@
       </div>
     </div>
 
-    <!-- 6. ẨN LỚP NÚT HTML TRÙNG LẶP ĐỂ DÙNG HỆ THỐNG NÚT VẼ TRÊN CANVAS CỦA CONTROLS.JS -->
+    <!-- 6. LỚP ĐIỀU KHIỂN CHIẾN ĐẤU (Controls canvas rendered) -->
     <div id="combat-controls-layer" class="combat-controls-layer hidden"></div>
+
+    <!-- NHẮC NHỞ TƯƠNG TÁC -->
+    <div id="interact-prompt" class="glass-panel interact-banner hidden" onclick="Game.Systems.interact()">
+      Nhấn <strong>[E]</strong> hoặc chạm để tương tác
+    </div>
 
     <!-- 7. BẢNG ĐIỀU KHIỂN QUẢN TRỊ VIÊN ADMIN (#admin-panel) -->
     <div id="admin-panel" class="glass-panel admin-hud-panel hidden">
       <div class="admin-header">
-        <span class="admin-title">⚡ QUẢN TRỊ THỜI KHÔNG (ADMIN V2)</span>
+        <span class="admin-title">⚡ QUẢN TRỊ THỜI KHÔNG (ADMIN MASTER V2)</span>
         <button type="button" class="btn-close-admin" onclick="Game.UI.toggleAdminPanel(false)">✕</button>
       </div>
 
-      <!-- KHU VỰC 1: GIÁM SÁT REALTIME SERVER & NGƯỜI CHƠI ONLINE -->
       <div class="admin-server-section" style="display: block; margin-bottom: 15px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
           <h4 class="admin-section-title" style="margin: 0;">🌐 NGƯỜI CHƠI ONLINE TRỰC TUYẾN</h4>
@@ -237,7 +413,6 @@
           </table>
         </div>
 
-        <!-- Form gửi quà từ xa cho người chơi -->
         <div class="admin-gift-sender" style="margin-top: 10px;">
           <h5 class="admin-sub-title" style="margin-bottom: 6px;">🎁 GỬI QUÀ THỜI KHÔNG TỪ XA</h5>
           <div class="admin-gift-inputs" style="display: flex; gap: 6px; flex-wrap: wrap;">
@@ -253,7 +428,6 @@
 
       <hr class="admin-divider" style="border: 0; border-top: 1px solid rgba(255, 255, 255, 0.15); margin: 12px 0;">
 
-      <!-- KHU VỰC 2: ĐIỀU CHỈNH CHỈ SỐ NHÂN VẬT -->
       <h4 class="admin-section-title" style="margin-top: 0;">🛠️ ĐIỀU CHỈNH CHỈ SỐ</h4>
       <div class="admin-stats-box">
         <div class="admin-stat-row">
@@ -278,7 +452,6 @@
         </div>
       </div>
 
-      <!-- KHU VỰC 3: PHÍM TẮT QUYỀN NĂNG -->
       <div class="admin-grid">
         <button type="button" class="btn-admin btn-god" onclick="Game.Systems.adminAction('god')">
           🛡️ Bất Tử (God Mode)
@@ -301,38 +474,48 @@
       </div>
     </div>
 
-    <!-- NHẮC NHỞ TƯƠNG TÁC -->
-    <div id="interact-prompt" class="glass-panel interact-banner hidden" onclick="Game.Systems.interact()">
-      Nhấn <strong>[E]</strong> hoặc chạm để tương tác
-    </div>
-
-    <!-- 8. MODAL CHỌN NHÂN VẬT (#character-select-modal) -->
-    <div id="character-select-modal" class="modal-backdrop hidden">
-      <div class="glass-panel character-modal-container">
-        <div class="pause-status-banner">
-          <span class="pause-icon">🦸</span>
-          <span class="pause-text">LỰA CHỌN CHIẾN BINH THỜI KHÔNG</span>
-        </div>
-
-        <div class="shop-header">
-          <div class="shop-title-group">
-            <h2>ĐỘI HÌNH DU HÀNH GIA</h2>
-            <p class="shop-subtitle">Mỗi nhân vật sở hữu chỉ số cơ bản và bộ 4 kỹ năng riêng biệt</p>
+    <!-- ===================================================================
+         8. SỬA DỨT ĐIỂM LỖI CHỌN NHÂN VẬT BỊ TRÀN MÀN HÌNH (#character-select-modal)
+         - Click backdrop tự đóng
+         - Header cố định + nút ✕ ĐÓNG NHANH lớn dễ chạm
+         - Body cuộn dọc cảm ứng mượt mà
+         - Footer cố định
+         =================================================================== -->
+    <div id="character-select-modal" class="modal-backdrop hidden" onclick="if (event.target === this) Game.UI.toggleCharModal(false)">
+      <div class="mobile-modal-scaffold" onclick="event.stopPropagation()">
+        
+        <!-- HEADER CỐ ĐỊNH -->
+        <div class="modal-fixed-header">
+          <div>
+            <h2 style="margin: 0; font-size: 18px; color: #00f2fe; text-shadow: 0 0 8px rgba(0,242,254,0.5);">ĐỘI HÌNH DU HÀNH GIA</h2>
+            <p style="margin: 2px 0 0 0; font-size: 11px; color: #a0aec0;">Chọn chiến binh để lập tức tham chiến</p>
           </div>
-          <button type="button" class="btn-close-modal" onclick="Game.UI.toggleCharModal(false)" aria-label="Đóng">✕</button>
+          <!-- Nút Đóng Nhanh Kích Thước Lớn -->
+          <button type="button" class="btn-quick-close-large" onclick="Game.UI.toggleCharModal(false)">
+            ✕ ĐÓNG NHANH
+          </button>
         </div>
 
-        <div class="character-modal-body" id="character-list-container"></div>
+        <!-- THÂN DANH SÁCH CUỘN DỌC CẢM ỨNG CHỐNG TRÀN -->
+        <div class="modal-scrollable-body" id="character-list-container">
+          <!-- Danh sách tướng sẽ được render động từ JavaScript -->
+        </div>
 
-        <div class="shop-footer">
-          <button type="button" class="btn-secondary-close" onclick="Game.UI.toggleCharModal(false)">ĐÓNG BẢNG NHÂN VẬT</button>
+        <!-- FOOTER CỐ ĐỊNH Ở ĐÁY MÀN HÌNH -->
+        <div class="modal-fixed-footer">
+          <button type="button" class="btn-secondary-close" style="width: 100%; padding: 12px; font-weight: bold; border-radius: 8px;" onclick="Game.UI.toggleCharModal(false)">
+            TRỞ VỀ CHIẾN TRƯỜNG
+          </button>
         </div>
       </div>
     </div>
 
-    <!-- 9. BẢNG CỬA HÀNG & KHO ĐỒ (#shop-modal) -->
-    <div id="shop-modal" class="modal-backdrop hidden">
-      <div class="glass-panel shop-container">
+    <!-- ===================================================================
+         9. CỬA HÀNG ĐƯỢC NÂNG CẤP TOÀN DIỆN (#shop-modal)
+         Bổ sung 10 Cổ vật Mục I, 10 Hiệu ứng Vũ khí Mục II, Tiến Hóa Tinh Linh V.1 & V.2
+         =================================================================== -->
+    <div id="shop-modal" class="modal-backdrop hidden" onclick="if (event.target === this) Game.Systems.toggleShop()">
+      <div class="glass-panel shop-container" onclick="event.stopPropagation()">
         <div class="pause-status-banner">
           <span class="pause-icon">⏸️</span>
           <span class="pause-text">TRÒ CHƠI ĐANG TẠM DỪNG</span>
@@ -341,14 +524,14 @@
         <div class="shop-header">
           <div class="shop-title-group">
             <h2>TRẠM TIẾP TẾ THỜI KHÔNG</h2>
-            <p class="shop-subtitle">Vũ khí, Cường hóa, Cổ vật &amp; Dịch chuyển</p>
+            <p class="shop-subtitle">Vũ khí, Cường hóa, 10 Cổ Vật, 10 Hiệu Ứng Phụ &amp; Tinh Linh</p>
           </div>
           <div class="shop-power-banner">⚡ CHIẾN LỰC HIỆN TẠI: <strong id="shop-combat-power">1000</strong></div>
           <button type="button" class="btn-close-modal" onclick="Game.Systems.toggleShop()" aria-label="Đóng">✕</button>
         </div>
 
         <div class="shop-body">
-          <!-- KHU VỰC 1: DANH SÁCH VŨ KHÍ & CƯỜNG HÓA -->
+          <!-- KHU VỰC 1: KHO VŨ KHÍ & CƯỜNG HÓA CƠ BẢN -->
           <div class="shop-section">
             <h3 class="section-heading">KHO VŨ KHÍ &amp; CƯỜNG HÓA (+12% SÁT THƯƠNG / CẤP)</h3>
             <div class="weapon-grid">
@@ -402,7 +585,7 @@
                 <div class="weapon-icon">🔫</div>
                 <div class="weapon-details">
                   <div class="weapon-name">Súng Quang Tuyến <span id="w-lvl-laser_gun" class="enhance-tag">+0</span></div>
-                  <div class="weapon-desc">Bắn tia năng lượng góc ngắm hẹp (±15°). Sát thương giảm dần khi xuyên nhiều mục tiêu &amp; có cơ chế Quá Nhiệt.</div>
+                  <div class="weapon-desc">Bắn tia năng lượng góc ngắm hẹp (±15°). Sát thương giảm dần khi xuyên mục tiêu &amp; Quá Nhiệt.</div>
                   <div class="weapon-price">Giá: <span>600G</span> (Yêu cầu: Tương Lai)</div>
                   <div id="w-awaken-laser_gun" class="awaken-badge">🔒 Cường hóa +5 mở Thức Tỉnh</div>
                 </div>
@@ -424,7 +607,7 @@
                 <div class="weapon-icon">🌙</div>
                 <div class="weapon-details">
                   <div class="weapon-name">Lưỡi Hái Hư Không <span id="w-lvl-void_scythe" class="enhance-tag">+0</span></div>
-                  <div class="weapon-desc">Quét vòng tròn 360° hút máu, xóa sổ đạn xung quanh &amp; Triệu hồi Hố Đen hút quái ở đòn thứ 3.</div>
+                  <div class="weapon-desc">Quét vòng tròn 360° hút máu, xóa sổ đạn xung quanh &amp; Hố Đen gom quái đòn thứ 3.</div>
                   <div class="weapon-price">Giá: <span>1200G</span> (Yêu cầu: Tương Lai)</div>
                   <div id="w-awaken-void_scythe" class="awaken-badge">🔒 Cường hóa +5 mở Thức Tỉnh</div>
                 </div>
@@ -446,7 +629,7 @@
                 <div class="weapon-icon">☄️</div>
                 <div class="weapon-details">
                   <div class="weapon-name">Pháo Năng Lượng Thời Không <span id="w-lvl-chrono_cannon" class="enhance-tag">+0</span></div>
-                  <div class="weapon-desc">Đại pháo trọng lực ngắm định hướng. Tâm vụ nổ gây 100% ST, rìa nổ gây 55% ST.</div>
+                  <div class="weapon-desc">Đại pháo trọng lực nổ diện rộng. Tâm vụ nổ gây 100% ST, rìa vụ nổ gây 55% ST.</div>
                   <div class="weapon-price">Giá: <span>2500G</span> (Yêu cầu: Tương Lai)</div>
                   <div id="w-awaken-chrono_cannon" class="awaken-badge">🔒 Cường hóa +5 mở Thức Tỉnh</div>
                 </div>
@@ -466,159 +649,364 @@
             </div>
           </div>
 
-          <!-- KHU VỰC 2: CƯỜNG HÓA CƠ THỂ -->
+          <!-- KHU VỰC 2: CƯỜNG HÓA CHỈ SỐ CƠ THỂ -->
           <div class="shop-section">
-            <h3 class="section-heading">CƯỜNG HÓA CƠ THỂ</h3>
+            <h3 class="section-heading">CƯỜNG HÓA CHỈ SỐ CƠ THỂ</h3>
             <div class="weapon-grid">
-
               <div class="upgrade-card">
                 <div class="upgrade-info">
                   <span class="upgrade-icon">❤️</span>
                   <div>
-                    <div class="upgrade-name">Nâng Cấp Sinh Lực <span id="upg-lvl-hp" class="enhance-tag">Cấp 0</span></div>
-                    <div class="upgrade-desc">Tăng +25 Máu tối đa &amp; Khiên tối đa +5 mỗi cấp.</div>
+                    <div class="upgrade-name">Sinh Lực Tối Đa <span id="upg-lvl-hp" class="enhance-tag">Cấp 0</span></div>
+                    <div class="upgrade-desc">Tăng +25 Máu tối đa &amp; +5 Khiên tối đa mỗi cấp.</div>
                   </div>
                 </div>
-                <button type="button" id="btn-upg-hp" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeStat('hp')">
-                  Nâng cấp (100G)
-                </button>
+                <button type="button" id="btn-upg-hp" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeStat('hp')">Nâng cấp (100G)</button>
               </div>
 
               <div class="upgrade-card">
                 <div class="upgrade-info">
                   <span class="upgrade-icon">⚡</span>
                   <div>
-                    <div class="upgrade-name">Nâng Cấp Tốc Chạy <span id="upg-lvl-speed" class="enhance-tag">Cấp 0</span></div>
+                    <div class="upgrade-name">Tốc Độ Hành Động <span id="upg-lvl-speed" class="enhance-tag">Cấp 0</span></div>
                     <div class="upgrade-desc">Tăng +15 tốc độ di chuyển cơ bản mỗi cấp.</div>
                   </div>
                 </div>
-                <button type="button" id="btn-upg-speed" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeStat('speed')">
-                  Nâng cấp (120G)
-                </button>
+                <button type="button" id="btn-upg-speed" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeStat('speed')">Nâng cấp (120G)</button>
               </div>
 
               <div class="upgrade-card">
                 <div class="upgrade-info">
                   <span class="upgrade-icon">🔥</span>
                   <div>
-                    <div class="upgrade-name">Cường Hóa Sát Thương <span id="upg-lvl-damage" class="enhance-tag">Cấp 0</span></div>
-                    <div class="upgrade-desc">Tăng +6 sát thương cơ bản cho mọi đòn đánh.</div>
+                    <div class="upgrade-name">Sức Mạnh Tuyệt Đối <span id="upg-lvl-damage" class="enhance-tag">Cấp 0</span></div>
+                    <div class="upgrade-desc">Tăng +6 sát thương cơ bản cho mọi loại vũ khí.</div>
                   </div>
                 </div>
-                <button type="button" id="btn-upg-damage" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeStat('damage')">
-                  Nâng cấp (150G)
-                </button>
+                <button type="button" id="btn-upg-damage" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeStat('damage')">Nâng cấp (150G)</button>
               </div>
 
               <div class="upgrade-card">
                 <div class="upgrade-info">
                   <span class="upgrade-icon">🧪</span>
                   <div>
-                    <div class="upgrade-name">Bình Hồi Phục Sinh Lực</div>
-                    <div class="upgrade-desc">Hồi phục lập tức 100% Máu &amp; Khiên (Hồi chiêu: 15s).</div>
+                    <div class="upgrade-name">Bình Dược Phục Sinh</div>
+                    <div class="upgrade-desc">Hồi phục tức thì 100% Máu &amp; Khiên năng lượng (CD: 15s).</div>
                   </div>
                 </div>
-                <button type="button" id="btn-upg-heal" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeStat('heal')">
-                  Mua (50G)
-                </button>
+                <button type="button" id="btn-upg-heal" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeStat('heal')">Mua (50G)</button>
               </div>
-
             </div>
           </div>
 
-          <!-- KHU VỰC 3: TINH LINH & CỔ VẬT THỜI KHÔNG -->
+          <!-- KHU VỰC 3: MỤC I - 10 TRANG BỊ & CỔ VẬT THỜI KHÔNG ĐẶC BIỆT -->
           <div class="shop-section">
-            <h3 class="section-heading">TINH LINH &amp; CỔ VẬT THỜI KHÔNG (TỐI ĐA TRANG BỊ 4 CỔ VẬT)</h3>
+            <h3 class="section-heading">10 CỔ VẬT HUYỀN THOẠI (TỐI ĐA TRANG BỊ 4 CỔ VẬT)</h3>
             <div class="weapon-grid">
 
-              <!-- TINH LINH -->
+              <!-- CỔ VẬT 1: Nam Châm Hút Vật Phẩm -->
               <div class="upgrade-card">
                 <div class="upgrade-info">
-                  <span class="upgrade-icon">🧚</span>
+                  <span class="upgrade-icon">🧲</span>
                   <div>
-                    <div class="upgrade-name">Tinh Linh Thời Không (Time Pet)</div>
-                    <div class="upgrade-desc">Bay theo hộ vệ, tự động bắn đạn năng lượng tấn công kẻ địch gần nhất.</div>
+                    <div class="upgrade-name">Nam Châm Hút Vật Phẩm (Loot Magnet)</div>
+                    <div class="upgrade-desc">Tự động hút vàng, ngọc và mảnh thời không trong bán kính rộng 450px.</div>
                   </div>
                 </div>
-                <button type="button" id="btn-buy-pet" class="btn-action" onclick="Game.Systems.buyPet()">
-                  Chiêu Mộ (800G)
+                <button type="button" id="btn-relic-loot_magnet" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('loot_magnet')">
+                  Mua (450G)
                 </button>
               </div>
 
-              <!-- CỔ VẬT 1: TỐC ĐỘ -->
+              <!-- CỔ VẬT 2: Ngọc Nhân Đôi Thu Hoạch -->
               <div class="upgrade-card">
                 <div class="upgrade-info">
-                  <span class="upgrade-icon">💎</span>
+                  <span class="upgrade-icon">💰</span>
                   <div>
-                    <div class="upgrade-name">Ngọc Tốc Độ (Relic Speed)</div>
-                    <div class="upgrade-desc">Cổ vật thần tốc: Tăng +15% tốc độ di chuyển tổng thể.</div>
+                    <div class="upgrade-name">Ngọc Thu Hoạch (Greed Relic)</div>
+                    <div class="upgrade-desc">Tăng +100% lượng Vàng và +50% Mảnh Thời Không rơi ra từ quái và rương.</div>
                   </div>
                 </div>
-                <button type="button" id="btn-relic-relic_speed" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('relic_speed')">
-                  Mua (500G)
+                <button type="button" id="btn-relic-greed_relic" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('greed_relic')">
+                  Mua (650G)
                 </button>
               </div>
 
-              <!-- CỔ VẬT 2: HÚT MÁU -->
+              <!-- CỔ VẬT 3: Giày Lướt Phản Lực -->
               <div class="upgrade-card">
                 <div class="upgrade-info">
-                  <span class="upgrade-icon">🩸</span>
+                  <span class="upgrade-icon">🥾</span>
                   <div>
-                    <div class="upgrade-name">Ngọc Hút Máu (Relic Vamp)</div>
-                    <div class="upgrade-desc">Cổ vật huyết tinh: Hút máu từ sát thương gây ra.</div>
+                    <div class="upgrade-name">Giày Phản Lực (Aero Boots)</div>
+                    <div class="upgrade-desc">Tăng +25% tốc chạy &amp; Giảm 50% thời gian hồi chiêu Lướt / Dash.</div>
                   </div>
                 </div>
-                <button type="button" id="btn-relic-relic_vamp" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('relic_vamp')">
-                  Mua (500G)
+                <button type="button" id="btn-relic-aero_boots" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('aero_boots')">
+                  Mua (550G)
                 </button>
               </div>
 
-              <!-- CỔ VẬT 3: PHẢN ĐÒN -->
+              <!-- CỔ VẬT 4: Nhẫn Hồi Phục Sinh Mệnh -->
               <div class="upgrade-card">
                 <div class="upgrade-info">
-                  <span class="upgrade-icon">🛡️</span>
+                  <span class="upgrade-icon">💍</span>
                   <div>
-                    <div class="upgrade-name">Ngọc Phản Đòn (Relic Thorn)</div>
-                    <div class="upgrade-desc">Cổ vật gai góc: Phản lại 25% sát thương lên kẻ tấn công.</div>
+                    <div class="upgrade-name">Nhẫn Hồi Sinh (Regen Ring)</div>
+                    <div class="upgrade-desc">Tự động hồi phục 3.5% Máu tối đa mỗi giây liên tục cả trong giao tranh.</div>
                   </div>
                 </div>
-                <button type="button" id="btn-relic-relic_thorn" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('relic_thorn')">
-                  Mua (500G)
+                <button type="button" id="btn-relic-regen_ring" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('regen_ring')">
+                  Mua (700G)
                 </button>
               </div>
 
-              <!-- CỔ VẬT 4: LÕI LÀM MÁT LƯỢNG TỬ -->
+              <!-- CỔ VẬT 5: Trái Tim Băng Giá -->
               <div class="upgrade-card">
                 <div class="upgrade-info">
                   <span class="upgrade-icon">❄️</span>
                   <div>
-                    <div class="upgrade-name">Lõi Làm Mát Lượng Tử (Relic Cooling)</div>
-                    <div class="upgrade-desc">Giảm 40% nhiệt lượng sinh ra của Súng Laser &amp; Tăng +10 Sát thương cơ bản.</div>
+                    <div class="upgrade-name">Trái Tim Băng Giá (Frost Heart)</div>
+                    <div class="upgrade-desc">Tỏa hào quang băng làm giảm 40% tốc chạy &amp; 30% tốc đánh kẻ địch xung quanh.</div>
                   </div>
                 </div>
-                <button type="button" id="btn-relic-relic_cooling" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('relic_cooling')">
-                  Mua (600G)
+                <button type="button" id="btn-relic-frost_heart" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('frost_heart')">
+                  Mua (800G)
                 </button>
               </div>
 
-              <!-- CỔ VẬT 5: ẤN KÝ ÁM SÁT -->
+              <!-- CỔ VẬT 6: Mặt Dây Chuyền Bất Khuất -->
               <div class="upgrade-card">
                 <div class="upgrade-info">
-                  <span class="upgrade-icon">🗡️</span>
+                  <span class="upgrade-icon">🛡️</span>
                   <div>
-                    <div class="upgrade-name">Ấn Ký Ám Sát (Relic Assassin)</div>
-                    <div class="upgrade-desc">Tăng +20% Máu tối đa, +10 Tốc chạy &amp; Hồi thêm +5 Nộ mỗi khi hạ gục kẻ địch.</div>
+                    <div class="upgrade-name">Dây Chuyền Bất Khuất (Last Stand Pendant)</div>
+                    <div class="upgrade-desc">Khi máu dưới 25%: Nhận bất tử 3 giây và hồi 50% Khiên lập tức (CD: 60s).</div>
                   </div>
                 </div>
-                <button type="button" id="btn-relic-relic_assassin" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('relic_assassin')">
-                  Mua (750G)
+                <button type="button" id="btn-relic-last_stand_pendant" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('last_stand_pendant')">
+                  Mua (1000G)
+                </button>
+              </div>
+
+              <!-- CỔ VẬT 7: Kính Hồng Ngoại Cảnh Báo -->
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">🎯</span>
+                  <div>
+                    <div class="upgrade-name">Kính Cảnh Báo (Sniper Scope)</div>
+                    <div class="upgrade-desc">Mở rộng tầm nhìn, tăng +35% tỉ lệ Đòn Đánh Chí Mạng và x2 sát thương headshot.</div>
+                  </div>
+                </div>
+                <button type="button" id="btn-relic-sniper_scope" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('sniper_scope')">
+                  Mua (850G)
+                </button>
+              </div>
+
+              <!-- CỔ VẬT 8: Bộ Lưu Trữ Lượng Tử -->
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">🔋</span>
+                  <div>
+                    <div class="upgrade-name">Pin Lượng Tử (Quantum Battery)</div>
+                    <div class="upgrade-desc">Tăng giới hạn thanh Nộ Thời Không lên 150% và tích nộ nhanh gấp đôi.</div>
+                  </div>
+                </div>
+                <button type="button" id="btn-relic-quantum_battery" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('quantum_battery')">
+                  Mua (900G)
+                </button>
+              </div>
+
+              <!-- CỔ VẬT 9: Móng Vuốt Ma Cà Rồng -->
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">🩸</span>
+                  <div>
+                    <div class="upgrade-name">Móng Vuốt Quỷ (Blood Claws)</div>
+                    <div class="upgrade-desc">Chuyển hóa 18% tổng sát thương gây ra thành Máu cho nhân vật.</div>
+                  </div>
+                </div>
+                <button type="button" id="btn-relic-blood_claws" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('blood_claws')">
+                  Mua (950G)
+                </button>
+              </div>
+
+              <!-- CỔ VẬT 10: Lõi Gia Tốc Hồi Chiêu -->
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">⏳</span>
+                  <div>
+                    <div class="upgrade-name">Lõi Gia Tốc (Haste Matrix)</div>
+                    <div class="upgrade-desc">Giảm toàn diện 30% thời gian hồi chiêu của tất cả kỹ năng chủ động.</div>
+                  </div>
+                </div>
+                <button type="button" id="btn-relic-haste_matrix" class="btn-action" onclick="Game.Systems.buyOrToggleRelic('haste_matrix')">
+                  Mua (1100G)
                 </button>
               </div>
 
             </div>
           </div>
 
-          <!-- KHU VỰC 4: TRẠM DỊCH CHUYỂN TỨC THỜI -->
+          <!-- KHU VỰC 4: MỤC II - 10 HIỆU ỨNG VŨ KHÍ NGUYÊN TỐ & KỸ THUẬT -->
+          <div class="shop-section">
+            <h3 class="section-heading">10 HIỆU ỨNG PHỤ TRỢ VŨ KHÍ (KÍCH HOẠT KHI TẤN CÔNG)</h3>
+            <div class="weapon-grid">
+
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">☣️</span>
+                  <div>
+                    <div class="upgrade-name">1. Độc Lượng Tử (Quantum Poison) <span id="weff-lvl-poison" class="enhance-tag">Cấp 0</span></div>
+                    <div class="upgrade-desc">Gây sát thương độc 6% mỗi giây trong 5s, giảm 50% hồi phục của mục tiêu.</div>
+                  </div>
+                </div>
+                <button type="button" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeWeaponEffect('poison')">Nâng cấp (300G)</button>
+              </div>
+
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">🔥</span>
+                  <div>
+                    <div class="upgrade-name">2. Thiêu Đốt Plasma (Plasma Burn) <span id="weff-lvl-burn" class="enhance-tag">Cấp 0</span></div>
+                    <div class="upgrade-desc">Đốt cháy lan sang kẻ địch kế cận, thiêu rụi giáp vật lý.</div>
+                  </div>
+                </div>
+                <button type="button" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeWeaponEffect('burn')">Nâng cấp (300G)</button>
+              </div>
+
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">🧊</span>
+                  <div>
+                    <div class="upgrade-name">3. Đóng Băng Tuyệt Đối (Absolute Frost) <span id="weff-lvl-freeze" class="enhance-tag">Cấp 0</span></div>
+                    <div class="upgrade-desc">Tỉ lệ 20% làm đông cứng mục tiêu trong 1.5 giây, nhận thêm 30% ST khi bị vỡ đá.</div>
+                  </div>
+                </div>
+                <button type="button" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeWeaponEffect('freeze')">Nâng cấp (350G)</button>
+              </div>
+
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">⚡</span>
+                  <div>
+                    <div class="upgrade-name">4. Sét Dây Chuyền (Chain Lightning) <span id="weff-lvl-chain_lightning" class="enhance-tag">Cấp 0</span></div>
+                    <div class="upgrade-desc">Phóng tia sét lan tối đa 4 kẻ địch gần đó gây sát thương điện giật.</div>
+                  </div>
+                </div>
+                <button type="button" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeWeaponEffect('chain_lightning')">Nâng cấp (400G)</button>
+              </div>
+
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">🌀</span>
+                  <div>
+                    <div class="upgrade-name">5. Xuyên Giáp Hư Không (Void Armor Break) <span id="weff-lvl-armor_break" class="enhance-tag">Cấp 0</span></div>
+                    <div class="upgrade-desc">Xuyên bỏ hoàn toàn 40% giáp hộ mệnh của quái tinh anh &amp; Boss.</div>
+                  </div>
+                </div>
+                <button type="button" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeWeaponEffect('armor_break')">Nâng cấp (400G)</button>
+              </div>
+
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">💫</span>
+                  <div>
+                    <div class="upgrade-name">6. Choáng Trọng Lực (Gravity Stun) <span id="weff-lvl-gravity_stun" class="enhance-tag">Cấp 0</span></div>
+                    <div class="upgrade-desc">Gây ngắt chiêu quái vật và làm choáng 0.8 giây khi dồn đủ 3 đòn.</div>
+                  </div>
+                </div>
+                <button type="button" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeWeaponEffect('gravity_stun')">Nâng cấp (450G)</button>
+              </div>
+
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">🧛</span>
+                  <div>
+                    <div class="upgrade-name">7. Hút Máu Hắc Ám (Dark Drain) <span id="weff-lvl-dark_drain" class="enhance-tag">Cấp 0</span></div>
+                    <div class="upgrade-desc">Hút sinh lực đối thủ chuyển hóa thành lá chắn khi máu đầy.</div>
+                  </div>
+                </div>
+                <button type="button" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeWeaponEffect('dark_drain')">Nâng cấp (450G)</button>
+              </div>
+
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">💥</span>
+                  <div>
+                    <div class="upgrade-name">8. Bom Phản Ứng Nổ Lan (Reactive Blast) <span id="weff-lvl-reactive_blast" class="enhance-tag">Cấp 0</span></div>
+                    <div class="upgrade-desc">Quái bị tiêu diệt sẽ phát nổ, gây 50% lượng máu của nó thành sát thương diện rộng.</div>
+                  </div>
+                </div>
+                <button type="button" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeWeaponEffect('reactive_blast')">Nâng cấp (500G)</button>
+              </div>
+
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">🏹</span>
+                  <div>
+                    <div class="upgrade-name">9. Bắn Tỉa Chí Mạng (Critical Sniper) <span id="weff-lvl-crit_sniper" class="enhance-tag">Cấp 0</span></div>
+                    <div class="upgrade-desc">Tăng sát thương thêm 50% nếu mục tiêu ở khoảng cách xa hơn 300px.</div>
+                  </div>
+                </div>
+                <button type="button" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeWeaponEffect('crit_sniper')">Nâng cấp (500G)</button>
+              </div>
+
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">🌊</span>
+                  <div>
+                    <div class="upgrade-name">10. Sóng Âm Trảm Kích (Sonic Wave) <span id="weff-lvl-sonic_wave" class="enhance-tag">Cấp 0</span></div>
+                    <div class="upgrade-desc">Mọi đòn cận chiến phóng ra luồng sóng âm đẩy lùi kẻ địch và triệt tiêu đạn.</div>
+                  </div>
+                </div>
+                <button type="button" class="btn-action btn-upgrade" onclick="Game.Systems.upgradeWeaponEffect('sonic_wave')">Nâng cấp (550G)</button>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- KHU VỰC 5: HỆ THỐNG TIẾN HÓA TINH LINH (V.1) & TINH LINH NHẶT ĐỒ (V.2) -->
+          <div class="shop-section">
+            <h3 class="section-heading">HỆ THỐNG ĐỒNG HÀNH TINH LINH (PET V.1 &amp; V.2)</h3>
+            <div class="weapon-grid">
+              
+              <!-- Pet Chiến Đấu & Tiến Hóa V.1 -->
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">🧚</span>
+                  <div>
+                    <div class="upgrade-name">Tinh Linh Thời Không (Chiến Đấu) <span id="pet-evolution-stage" class="enhance-tag">Bậc 1</span></div>
+                    <div class="upgrade-desc">Tự động bắn đạn năng lượng phụ trợ &amp; Tiến hóa tăng đạn chùm ở Bậc 2, Bậc 3.</div>
+                  </div>
+                </div>
+                <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                  <button type="button" id="btn-buy-pet" class="btn-action" onclick="Game.Systems.buyPet()">
+                    Chiêu Mộ (800G)
+                  </button>
+                  <button type="button" id="btn-evolve-pet" class="btn-action btn-upgrade" onclick="Game.Systems.evolvePet()">
+                    ✨ Tiến Hóa Bậc Mới (1500G)
+                  </button>
+                </div>
+              </div>
+
+              <!-- Tinh Linh Nhặt Đồ Tự Động V.2 -->
+              <div class="upgrade-card">
+                <div class="upgrade-info">
+                  <span class="upgrade-icon">🤖</span>
+                  <div>
+                    <div class="upgrade-name">Drone Nhặt Đồ Lượng Tử (Loot Companion)</div>
+                    <div class="upgrade-desc">Drone chuyên biệt tự động bay đi nhặt vàng, đá quý và rương trên khắp bản đồ.</div>
+                  </div>
+                </div>
+                <button type="button" id="btn-buy-loot-drone" class="btn-action" onclick="Game.Systems.buyLootCompanion()">
+                  Kích Hoạt Drone (1000G)
+                </button>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- KHU VỰC 6: TRẠM DỊCH CHUYỂN TỨC THỜI -->
           <div class="shop-section">
             <h3 class="section-heading">CỔNG DỊCH CHUYỂN TỨC THỜI</h3>
             <div class="waypoint-shop-grid">
@@ -642,7 +1030,172 @@
       </div>
     </div>
 
-    <!-- 10. MODAL NHẬP GIFTCODE (#giftcode-modal) -->
+    <!-- ===================================================================
+         10. MODAL BẢNG BỔ TRỢ THIÊN PHÚ (#talent-tree-modal - V.3)
+         =================================================================== -->
+    <div id="talent-tree-modal" class="modal-backdrop hidden" onclick="if (event.target === this) Game.UI.toggleTalentModal(false)">
+      <div class="mobile-modal-scaffold" onclick="event.stopPropagation()">
+        <div class="modal-fixed-header">
+          <div>
+            <h2 style="margin: 0; font-size: 18px; color: #43e97b;">BẢNG BỔ TRỢ THIÊN PHÚ THỜI KHÔNG</h2>
+            <p style="margin: 2px 0 0 0; font-size: 11px; color: #a0aec0;">Điểm Thiên Phú còn lại: <strong id="talent-points-available" style="color: #00ffaa;">0</strong></p>
+          </div>
+          <button type="button" class="btn-quick-close-large" onclick="Game.UI.toggleTalentModal(false)">✕ ĐÓNG</button>
+        </div>
+        <div class="modal-scrollable-body" id="talent-tree-container">
+          <!-- Cây thiên phú 3 nhánh: Công Kích, Phòng Thủ, Thao Túng Thời Gian -->
+        </div>
+        <div class="modal-fixed-footer">
+          <button type="button" class="btn-action" onclick="if(Game.Systems.resetTalents) Game.Systems.resetTalents();">🔄 Tẩy Điểm Thiên Phú</button>
+          <button type="button" class="btn-secondary-close" onclick="Game.UI.toggleTalentModal(false)">ĐÓNG</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================================
+         11. MODAL KHO DANH HIỆU KÈM HIỆU ỨNG (#titles-modal - V.7)
+         =================================================================== -->
+    <div id="titles-modal" class="modal-backdrop hidden" onclick="if (event.target === this) Game.UI.toggleTitlesModal(false)">
+      <div class="mobile-modal-scaffold" onclick="event.stopPropagation()">
+        <div class="modal-fixed-header">
+          <div>
+            <h2 style="margin: 0; font-size: 18px; color: #ffd700;">KHO DANH HIỆU THỜI KHÔNG</h2>
+            <p style="margin: 2px 0 0 0; font-size: 11px; color: #a0aec0;">Trang bị danh hiệu kích hoạt chỉ số ẩn và hào quang độc quyền</p>
+          </div>
+          <button type="button" class="btn-quick-close-large" onclick="Game.UI.toggleTitlesModal(false)">✕ ĐÓNG</button>
+        </div>
+        <div class="modal-scrollable-body" id="titles-list-container">
+          <!-- Danh sách danh hiệu render từ talents_titles.js -->
+        </div>
+        <div class="modal-fixed-footer">
+          <button type="button" class="btn-secondary-close" style="width: 100%;" onclick="Game.UI.toggleTitlesModal(false)">ĐÓNG</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================================
+         12. MODAL CHẾ ĐỘ LEO THÁP VÔ TẬN (#abyss-modal - V.4)
+         =================================================================== -->
+    <div id="abyss-modal" class="modal-backdrop hidden" onclick="if (event.target === this) Game.UI.toggleAbyssModal(false)">
+      <div class="mobile-modal-scaffold" onclick="event.stopPropagation()">
+        <div class="modal-fixed-header">
+          <div>
+            <h2 style="margin: 0; font-size: 18px; color: #b176ff;">VỰC THẲM VÔ TẬN (LEO THÁP)</h2>
+            <p style="margin: 2px 0 0 0; font-size: 11px; color: #a0aec0;">Tầng cao nhất đạt được: <strong id="abyss-highest-floor" style="color: #ff00aa;">Tầng 1</strong></p>
+          </div>
+          <button type="button" class="btn-quick-close-large" onclick="Game.UI.toggleAbyssModal(false)">✕ ĐÓNG</button>
+        </div>
+        <div class="modal-scrollable-body" id="abyss-container">
+          <!-- Thông tin ải tháp, quái vật từng tầng và phần thưởng -->
+        </div>
+        <div class="modal-fixed-footer">
+          <button type="button" class="btn-action" style="flex: 1;" onclick="if(Game.Systems.startAbyssRun) Game.Systems.startAbyssRun(); Game.UI.toggleAbyssModal(false);">⚔️ VÀO KHIÊU CHIẾN</button>
+          <button type="button" class="btn-secondary-close" onclick="Game.UI.toggleAbyssModal(false)">RÚT LUI</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================================
+         13. MODAL BẢNG XẾP HẠNG CHIẾN LỰC TRỰC TUYẾN (#leaderboard-modal - V.5)
+         =================================================================== -->
+    <div id="leaderboard-modal" class="modal-backdrop hidden" onclick="if (event.target === this) Game.UI.toggleLeaderboardModal(false)">
+      <div class="mobile-modal-scaffold" onclick="event.stopPropagation()">
+        <div class="modal-fixed-header">
+          <div>
+            <h2 style="margin: 0; font-size: 18px; color: #f6d365;">BẢNG VINH DANH CHIẾN BINH</h2>
+            <p style="margin: 2px 0 0 0; font-size: 11px; color: #a0aec0;">Đồng bộ dữ liệu thời gian thực Realtime</p>
+          </div>
+          <button type="button" class="btn-quick-close-large" onclick="Game.UI.toggleLeaderboardModal(false)">✕ ĐÓNG</button>
+        </div>
+        <div class="modal-scrollable-body" id="leaderboard-container">
+          <table style="width: 100%; border-collapse: collapse; font-size: 13px; color: #fff;">
+            <thead>
+              <tr style="background: rgba(255, 255, 255, 0.08); text-align: left;">
+                <th style="padding: 8px;">Hạng</th>
+                <th style="padding: 8px;">Chiến Binh</th>
+                <th style="padding: 8px;">Chiến Lực</th>
+                <th style="padding: 8px;">Tháp</th>
+              </tr>
+            </thead>
+            <tbody id="leaderboard-tbody">
+              <tr>
+                <td colspan="4" style="text-align: center; padding: 15px; color: #a0aec0;">Đang nạp bảng xếp hạng...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="modal-fixed-footer">
+          <button type="button" class="btn-action" onclick="if(Game.Systems.refreshLeaderboard) Game.Systems.refreshLeaderboard();">🔄 Làm Mới</button>
+          <button type="button" class="btn-secondary-close" onclick="Game.UI.toggleLeaderboardModal(false)">ĐÓNG</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================================
+         14. BẢNG HỆ THỐNG THỬ THÁCH HẰNG NGÀY (#daily-bounties-panel - V.6)
+         =================================================================== -->
+    <div id="daily-bounties-panel" class="modal-backdrop hidden" onclick="if (event.target === this) Game.UI.toggleBountiesPanel(false)">
+      <div class="mobile-modal-scaffold" onclick="event.stopPropagation()">
+        <div class="modal-fixed-header">
+          <div>
+            <h2 style="margin: 0; font-size: 18px; color: #00f2fe;">NHIỆM VỤ TIỀN THƯỞNG HẰNG NGÀY</h2>
+            <p style="margin: 2px 0 0 0; font-size: 11px; color: #a0aec0;">Làm mới mỗi 24 giờ. Hoàn thành để nhận Vàng và Mảnh Thời Không</p>
+          </div>
+          <button type="button" class="btn-quick-close-large" onclick="Game.UI.toggleBountiesPanel(false)">✕ ĐÓNG</button>
+        </div>
+        <div class="modal-scrollable-body" id="daily-bounties-list">
+          <!-- Danh sách nhiệm vụ hằng ngày -->
+        </div>
+        <div class="modal-fixed-footer">
+          <button type="button" class="btn-secondary-close" style="width: 100%;" onclick="Game.UI.toggleBountiesPanel(false)">ĐÓNG</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================================
+         15. MODAL THỐNG KÊ SÁT THƯƠNG CUỐI TRẬN (#combat-recap-modal - V.9)
+         =================================================================== -->
+    <div id="combat-recap-modal" class="modal-backdrop hidden" onclick="if (event.target === this) Game.UI.toggleCombatRecapModal(false)">
+      <div class="mobile-modal-scaffold" onclick="event.stopPropagation()">
+        <div class="modal-fixed-header">
+          <div>
+            <h2 style="margin: 0; font-size: 18px; color: #ff0844;">BẢNG TỔNG KẾT CHIẾN TRẬN</h2>
+            <p style="margin: 2px 0 0 0; font-size: 11px; color: #a0aec0;">Chi tiết DPS, Khả Năng Đỡ Đòn &amp; Phản Xạ Đạn</p>
+          </div>
+          <button type="button" class="btn-quick-close-large" onclick="Game.UI.toggleCombatRecapModal(false)">✕ ĐÓNG</button>
+        </div>
+        <div class="modal-scrollable-body" id="combat-recap-content">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 16px;">
+            <div class="stat-pill" style="flex-direction: column; align-items: center; padding: 12px;">
+              <span style="font-size: 11px; color: #a0aec0;">TỔNG SÁT THƯƠNG</span>
+              <strong id="recap-total-dmg" style="font-size: 18px; color: #ff4d4f;">0</strong>
+            </div>
+            <div class="stat-pill" style="flex-direction: column; align-items: center; padding: 12px;">
+              <span style="font-size: 11px; color: #a0aec0;">DPS TRUNG BÌNH</span>
+              <strong id="recap-dps" style="font-size: 18px; color: #faad14;">0</strong>
+            </div>
+            <div class="stat-pill" style="flex-direction: column; align-items: center; padding: 12px;">
+              <span style="font-size: 11px; color: #a0aec0;">SÁT THƯƠNG ĐỠ ĐƯỢC</span>
+              <strong id="recap-dmg-taken" style="font-size: 18px; color: #52c41a;">0</strong>
+            </div>
+            <div class="stat-pill" style="flex-direction: column; align-items: center; padding: 12px;">
+              <span style="font-size: 11px; color: #a0aec0;">ĐẠN ĐÃ PHẢN XẠ</span>
+              <strong id="recap-bullets-deflected" style="font-size: 18px; color: #1890ff;">0</strong>
+            </div>
+          </div>
+
+          <h4 style="margin: 8px 0; color: #cbd5e0;">Tỉ Lệ Sát Thương Nguồn Vũ Khí</h4>
+          <div id="recap-weapon-breakdown" style="display: flex; flex-direction: column; gap: 8px;">
+            <!-- Render thanh tỉ lệ phần trăm sát thương theo vũ khí -->
+          </div>
+        </div>
+        <div class="modal-fixed-footer">
+          <button type="button" class="btn-secondary-close" style="width: 100%;" onclick="Game.UI.toggleCombatRecapModal(false)">XÁC NHẬN &amp; ĐÓNG</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 16. MODAL NHẬP GIFTCODE (#giftcode-modal) -->
     <div id="giftcode-modal" class="modal-backdrop giftcode-backdrop hidden">
       <div class="glass-panel giftcode-container">
         <div class="pause-status-banner">
@@ -683,7 +1236,7 @@
       </div>
     </div>
 
-    <!-- 11. THIẾT KẾ LẠI MODAL ĐĂNG NHẬP / ĐĂNG KÝ HỆ THỐNG (#auth-modal) -->
+    <!-- 17. MODAL ĐĂNG NHẬP / ĐĂNG KÝ HỆ THỐNG (#auth-modal) -->
     <div id="auth-modal" class="modal-backdrop auth-backdrop">
       <div class="glass-panel auth-container" style="max-width: 380px; width: 90%; margin: auto; padding: 24px; box-sizing: border-box; text-align: center;">
         <div class="auth-header">
@@ -719,7 +1272,6 @@
             >
           </div>
 
-          <!-- DÒNG THÔNG BÁO LỖI MÀU ĐỎ -->
           <div id="auth-error-msg" style="color: #ff4d4f; font-size: 13px; min-height: 18px; text-align: center; font-weight: bold;"></div>
 
           <div class="auth-actions" style="display: flex; gap: 10px; margin-top: 6px;">
@@ -756,7 +1308,7 @@
       </div>
     </div>
 
-    <!-- 12. MÀN HÌNH KHÓA TÀI KHOẢN (#banned-overlay) -->
+    <!-- 18. MÀN HÌNH KHÓA TÀI KHOẢN (#banned-overlay) -->
     <div id="banned-overlay" class="banned-overlay-screen hidden">
       <div class="banned-box">
         <div class="banned-danger-icon">🚫</div>
@@ -774,10 +1326,24 @@
 
   </div>
 
-  <!-- KHỞI TẠO BIẾN TOÀN CỤC & HỆ THỐNG QUẢN LÝ UI ĐỒNG BỘ -->
+  <!-- ===================================================================
+       KHỞI TẠO BIẾN TOÀN CỤC & HỆ THỐNG QUẢN LÝ UI KIẾN TRÚC MỚI
+       =================================================================== -->
   <script>
     window.Game = {
-      state: {},
+      state: {
+        isPaused: false,
+        ultraFps: false,
+        hapticsEnabled: true,
+        combatStats: {
+          totalDamage: 0,
+          dps: 0,
+          damageTaken: 0,
+          bulletsDeflected: 0,
+          kills: 0,
+          weaponBreakdown: {}
+        }
+      },
       player: {},
       camera: { x: 0, y: 0, width: 800, height: 600 },
       World: {}, Controls: {}, Combat: {}, Enemies: {}, Systems: {}, Audio: {},
@@ -787,6 +1353,57 @@
 
         init() {
           this.renderCharacters();
+        },
+
+        // Hệ thống hiển thị thông báo thời gian thực trên mobile
+        showToast(msg, duration = 2200) {
+          const container = document.getElementById('game-toast-container');
+          if (!container) return;
+          const toast = document.createElement('div');
+          toast.className = 'game-toast';
+          toast.textContent = msg;
+          container.appendChild(toast);
+          setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transition = 'opacity 0.3s ease';
+            setTimeout(() => toast.remove(), 300);
+          }, duration);
+        },
+
+        // V.10: Rung phản hồi thông minh (Haptic Feedback)
+        triggerHaptic(type = 'light') {
+          if (!Game.state.hapticsEnabled || !navigator.vibrate) return;
+          if (type === 'light') navigator.vibrate(15);
+          else if (type === 'medium') navigator.vibrate(35);
+          else if (type === 'heavy') navigator.vibrate([40, 30, 60]);
+          else if (type === 'success') navigator.vibrate([20, 40, 20]);
+        },
+
+        toggleHaptics() {
+          Game.state.hapticsEnabled = !Game.state.hapticsEnabled;
+          const lbl = document.getElementById('lbl-haptic-status');
+          const btn = document.getElementById('btn-haptic-toggle');
+          if (lbl) lbl.textContent = Game.state.hapticsEnabled ? 'RUNG: BẬT' : 'RUNG: TẮT';
+          if (btn) {
+            btn.style.borderColor = Game.state.hapticsEnabled ? '#00ffaa' : '';
+            btn.style.color = Game.state.hapticsEnabled ? '#00ffaa' : '';
+          }
+          this.showToast(Game.state.hapticsEnabled ? 'Đã bật Rung Phản Hồi' : 'Đã tắt Rung');
+          this.triggerHaptic('success');
+        },
+
+        // V.8: Chế độ đồ họa siêu mượt 120Hz
+        toggleUltraFps() {
+          Game.state.ultraFps = !Game.state.ultraFps;
+          const lbl = document.getElementById('lbl-ultra-performance');
+          const btn = document.getElementById('btn-ultra-performance');
+          if (lbl) lbl.textContent = Game.state.ultraFps ? '120Hz: BẬT' : '120Hz: TẮT';
+          if (btn) {
+            btn.style.borderColor = Game.state.ultraFps ? '#00f2fe' : '';
+            btn.style.color = Game.state.ultraFps ? '#00f2fe' : '';
+          }
+          this.showToast(Game.state.ultraFps ? 'Kích hoạt chế độ 120Hz mượt mà' : 'Đã về chế độ mặc định 60Hz');
+          this.triggerHaptic('medium');
         },
 
         setCombatState(inCombat) {
@@ -814,13 +1431,98 @@
           }
         },
 
+        // ĐIỀU HƯỚNG MODAL CHỌN NHÂN VẬT AN TOÀN
         toggleCharModal(show) {
           const modal = document.getElementById('character-select-modal');
           if (!modal) return;
           const shouldShow = typeof show === 'boolean' ? show : modal.classList.contains('hidden');
           modal.classList.toggle('hidden', !shouldShow);
           Game.state.isPaused = shouldShow;
-          if (shouldShow) this.renderCharacters();
+          if (shouldShow) {
+            this.renderCharacters();
+            this.triggerHaptic('light');
+          }
+        },
+
+        // ĐỔI CHIẾN BINH & TỰ ĐỘNG THOÁT NGAY LẬP TỨC
+        selectCharacter(charId) {
+          if (Game.Systems && typeof Game.Systems.selectCharacter === 'function') {
+            Game.Systems.selectCharacter(charId);
+          } else if (Game.state) {
+            Game.state.selectedCharacter = charId;
+          }
+          this.triggerHaptic('success');
+          const charName = (Game.charactersConfig && Game.charactersConfig[charId]) ? Game.charactersConfig[charId].name : charId;
+          this.showToast(`✨ Đã xuất trận với chiến binh: ${charName}`);
+          
+          // Đóng bảng ngay lập tức trên mobile để trở về trận đấu
+          this.toggleCharModal(false);
+        },
+
+        toggleTalentModal(show) {
+          const modal = document.getElementById('talent-tree-modal');
+          if (!modal) return;
+          const shouldShow = typeof show === 'boolean' ? show : modal.classList.contains('hidden');
+          modal.classList.toggle('hidden', !shouldShow);
+          Game.state.isPaused = shouldShow;
+          if (shouldShow && Game.Systems && typeof Game.Systems.renderTalents === 'function') {
+            Game.Systems.renderTalents();
+          }
+        },
+
+        toggleTitlesModal(show) {
+          const modal = document.getElementById('titles-modal');
+          if (!modal) return;
+          const shouldShow = typeof show === 'boolean' ? show : modal.classList.contains('hidden');
+          modal.classList.toggle('hidden', !shouldShow);
+          Game.state.isPaused = shouldShow;
+          if (shouldShow && Game.Systems && typeof Game.Systems.renderTitles === 'function') {
+            Game.Systems.renderTitles();
+          }
+        },
+
+        toggleAbyssModal(show) {
+          const modal = document.getElementById('abyss-modal');
+          if (!modal) return;
+          const shouldShow = typeof show === 'boolean' ? show : modal.classList.contains('hidden');
+          modal.classList.toggle('hidden', !shouldShow);
+          Game.state.isPaused = shouldShow;
+          if (shouldShow && Game.Systems && typeof Game.Systems.renderAbyss === 'function') {
+            Game.Systems.renderAbyss();
+          }
+        },
+
+        toggleLeaderboardModal(show) {
+          const modal = document.getElementById('leaderboard-modal');
+          if (!modal) return;
+          const shouldShow = typeof show === 'boolean' ? show : modal.classList.contains('hidden');
+          modal.classList.toggle('hidden', !shouldShow);
+          Game.state.isPaused = shouldShow;
+          if (shouldShow && Game.Systems && typeof Game.Systems.fetchLeaderboard === 'function') {
+            Game.Systems.fetchLeaderboard();
+          }
+        },
+
+        toggleBountiesPanel(show) {
+          const modal = document.getElementById('daily-bounties-panel');
+          if (!modal) return;
+          const shouldShow = typeof show === 'boolean' ? show : modal.classList.contains('hidden');
+          modal.classList.toggle('hidden', !shouldShow);
+          Game.state.isPaused = shouldShow;
+          if (shouldShow && Game.Systems && typeof Game.Systems.renderBounties === 'function') {
+            Game.Systems.renderBounties();
+          }
+        },
+
+        toggleCombatRecapModal(show) {
+          const modal = document.getElementById('combat-recap-modal');
+          if (!modal) return;
+          const shouldShow = typeof show === 'boolean' ? show : modal.classList.contains('hidden');
+          modal.classList.toggle('hidden', !shouldShow);
+          Game.state.isPaused = shouldShow;
+          if (shouldShow && Game.Systems && typeof Game.Systems.updateRecapData === 'function') {
+            Game.Systems.updateRecapData();
+          }
         },
 
         toggleAdminPanel(show) {
@@ -851,80 +1553,75 @@
 
         setAuthError(message) {
           const errEl = document.getElementById('auth-error-msg');
-          if (errEl) {
-            errEl.textContent = message || '';
-          }
+          if (errEl) errEl.textContent = message || '';
         },
 
         setAdminButtonVisible(visible) {
           const btn = document.getElementById('btn-open-admin-panel');
-          if (btn) {
-            btn.classList.toggle('hidden', !visible);
-          }
+          if (btn) btn.classList.toggle('hidden', !visible);
         },
 
         renderCharacters() {
           const container = document.getElementById('character-list-container');
-          if (!container || !Game.charactersConfig) return;
+          if (!container) return;
+          if (!Game.charactersConfig) {
+            container.innerHTML = '<div style="color: #cbd5e0; text-align: center; padding: 20px;">Đang tải danh sách chiến binh thời không...</div>';
+            return;
+          }
           const currentId = Game.state.selectedCharacter || 'time_traveler';
 
           container.innerHTML = Object.keys(Game.charactersConfig).map(id => {
             const c = Game.charactersConfig[id];
             const isSelected = c.id === currentId;
             return `
-              <div class="char-card ${isSelected ? 'active-char' : ''}">
-                <div class="char-header">
-                  <div class="char-avatar">${c.avatar || '🦸'}</div>
-                  <div class="char-title-info">
-                    <div class="char-name">${c.name}</div>
-                    <div class="char-role">${c.role || c.title}</div>
+              <div class="char-card ${isSelected ? 'active-char' : ''}" style="margin-bottom: 12px; background: rgba(255,255,255,0.04); border-radius: 12px; padding: 12px; border: 1px solid ${isSelected ? '#00f2fe' : 'rgba(255,255,255,0.1)'};">
+                <div class="char-header" style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                  <div class="char-avatar" style="font-size: 32px; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; background: rgba(0,242,254,0.1); border-radius: 50%;">${c.avatar || '🦸'}</div>
+                  <div class="char-title-info" style="flex: 1;">
+                    <div class="char-name" style="font-size: 16px; font-weight: bold; color: #fff;">${c.name}</div>
+                    <div class="char-role" style="font-size: 12px; color: #00f2fe;">${c.role || c.title}</div>
                   </div>
-                  <button type="button" class="btn-action ${isSelected ? 'btn-equipped' : ''}" onclick="Game.UI.selectCharacter('${c.id}')">
-                    ${isSelected ? '✓ Đang Chọn' : 'Chọn Chiến Binh'}
+                  <button type="button" class="btn-action ${isSelected ? 'btn-equipped' : ''}" style="padding: 8px 14px; font-size: 13px;" onclick="Game.UI.selectCharacter('${c.id}')">
+                    ${isSelected ? '✓ Đang Dùng' : 'Chọn Chiến Binh'}
                   </button>
                 </div>
-                <div class="char-stats-grid">
+                <div class="char-stats-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; font-size: 12px; margin-bottom: 8px;">
                   <div class="stat-pill"><span>❤️ Máu:</span> <strong>${c.baseHp}</strong></div>
                   <div class="stat-pill"><span>🛡️ Giáp:</span> <strong>${c.baseShield}</strong></div>
                   <div class="stat-pill"><span>⚡ Tốc chạy:</span> <strong>${c.baseSpeed}</strong></div>
                   <div class="stat-pill"><span>💚 Hồi phục:</span> <strong>${c.hpRegen}/s</strong></div>
                 </div>
-                <div class="char-skills-row">
+                <div class="char-skills-row" style="display: flex; gap: 6px; flex-wrap: wrap;">
                   ${c.skills.map((s, idx) => `
-                    <div class="skill-badge-item" title="${s.name}">
+                    <div class="skill-badge-item" style="font-size: 11px; background: rgba(0,0,0,0.35); padding: 4px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);" title="${s.name}">
                       <span class="skill-badge-icon">${s.icon || '⚡'}</span>
-                      <span class="skill-badge-name">${idx === 0 ? 'Đánh' : 'Chiêu ' + idx}: ${s.name}</span>
+                      <span class="skill-badge-name">${idx === 0 ? 'Đánh' : 'Kỹ Năng ' + idx}: ${s.name}</span>
                     </div>
                   `).join('')}
                 </div>
               </div>
             `;
           }).join('');
-        },
-
-        selectCharacter(charId) {
-          if (Game.Systems && typeof Game.Systems.selectCharacter === 'function') {
-            Game.Systems.selectCharacter(charId);
-          }
-          this.renderCharacters();
         }
       }
     };
   </script>
 
-  <!-- NẠP THƯ VIỆN FIREBASE (COMPAT V9) TRƯỚC SYSTEMS.JS -->
+  <!-- NẠP THƯ VIỆN FIREBASE COMPAT TRƯỚC HỆ THỐNG GAME ENGINE -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
-  <!-- NHÚNG 6 FILE JS THEO ĐÚNG THỨ TỰ -->
+  <!-- NẠP ĐẦY ĐỦ CÁC TỆP JS THEO THỨ TỰ BẮT BUỘC -->
   <script src="world.js"></script>
   <script src="controls.js"></script>
   <script src="combat.js"></script>
   <script src="enemies.js"></script>
   <script src="systems.js"></script>
+  <script src="talents_titles.js"></script>
+  <script src="abyss_bounties.js"></script>
   <script src="main.js"></script>
 
-  <!-- Đăng ký Service Worker để biến Web thành App Cài Đặt (PWA) -->
+  <!-- Đăng ký Service Worker biến Web thành ứng dụng PWA độc lập -->
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
