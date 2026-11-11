@@ -1,20 +1,16 @@
 /**
  * ============================================================================
  * TỰA GAME: KẺ DU HÀNH THỜI KHÔNG (TIME TRAVELER ACTION RPG)
- * FILE: main.js - CORE GAME ENGINE ARCHITECTURE
- * QUY MÔ: BẢN ĐẠI TU TOÀN DIỆN CHO DESKTOP & MOBILE HIGH-REFRESH (120Hz/GPU)
+ * FILE: main.js - CORE GAME ENGINE ARCHITECTURE (PHẦN 1/2)
+ * QUY MÔ: ĐẠI TU TOÀN DIỆN CHO DESKTOP & MOBILE HIGH-REFRESH (120Hz / GPU DYNAMIC SCALING)
  * ============================================================================
- * CÁC HỆ THỐNG MỚI ĐƯỢC TÍCH HỢP ĐẦY ĐỦ:
- * 1. GIÀY LƯỚT PHẢN LỰC (Aero Boots - I.3): +25% Speed, Vệt Lửa 2.5s làm chậm & thiêu đốt quái vật.
- * 2. NHẪN HỒI PHỤC SINH MỆNH (Regen Ring - I.4): Hồi 2% Max HP/s ngay cả trong giao tranh.
- * 3. MẶT DÂY CHUYỀN BẤT KHUẤT (Last Stand Pendant - I.6) & HỒI SINH LƯỢNG TỬ (Second Chance - III.10):
- *    - Khiên ảo 50% HP trong 5s khi máu < 25% (Hồi 60s).
- *    - Tua ngược vị trí & dữ liệu 5 giây trước khi máu về 0 (1 lần/trận) kèm bão sấm sét đảo ngược.
- * 4. TIẾN HÓA TINH LINH (Pet Evolution - V.1) & TINH LINH NHẶT ĐỒ (Loot Companion - V.2):
- *    - Hào quang Cấp 2, định kỳ 10s tạo Khiên Bảo Vệ Lượng Tử cho người chơi.
- *    - Tự động quét và bay ra xa bán kính 650px nhặt Vàng, Ngọc, Mảnh Thời Không mang về.
- * 5. CHẾ ĐỘ 120Hz & SIÊU MƯỢT (Ultra Performance Toggle - V.8): Dynamic DPR, culling hạt, tối ưu GPU di động.
- * 6. BẢNG THỐNG KÊ CHIẾN ĐẤU (Combat Recap - V.9): Theo dõi DPS, phòng thủ, phản đạn và mở giao diện tổng kết.
+ * CÁC HỆ THỐNG ĐÃ TỐI ƯU VÀ NÂNG CẤP:
+ * 1. ĐỒNG BỘ THỨ TỰ UPDATE: Gán Game.state.player = Game.player trước toàn bộ Module.
+ * 2. GIÁM SÁT 120Hz & DYNAMIC DPR: Capped 1.5 trên 2K/3K, tự động hạ DPR và kích hoạt Culling khi < 45 FPS trong 3s.
+ * 3. AERO BOOTS TRAIL (I.3): Vệt lửa 2.5s gây sát thương liên tục và làm chậm quái 30% trong 1.5s.
+ * 4. LAST STAND PENDANT (I.6): Khiên ảo 50% HP trong 5s khi máu < 25% (Hồi 60s).
+ * 5. QUANTUM REVIVE (III.10): Buffer 50 snapshots (5s), tua ngược vị trí, hồi 50% HP/Khiên và phóng sấm sét đẩy lùi khi máu về 0.
+ * 6. PET EVOLUTION & LOOT COMPANION (V.1 - V.2): Hào quang Cấp 2, buff khiên mỗi 10s, Bậc 3 quét nhặt đồ bán kính 650px.
  * ============================================================================
  */
 
@@ -60,7 +56,7 @@ window.Game = window.Game || {};
     const aeroBootsFireTrail = [];
     let aeroBootsDropTimer = 0;
 
-    // Trạng thái Khiên Mặt Dây Chuyền Bất Khuất
+    // Trạng thái Khiên Mặt Dây Chuyền Bất Khuất (Last Stand Pendant)
     const lastStandState = {
         cooldown: 0,
         activeDuration: 0,
@@ -68,16 +64,16 @@ window.Game = window.Game || {};
         maxShieldAmount: 0
     };
 
-    // Hệ thống Hồi Sinh Lượng Tử (Quantum Revive / Second Chance - Tua ngược 5 giây)
+    // Hệ thống Hồi Sinh Lượng Tử (Quantum Revive - Tua ngược 5 giây)
     const quantumReviveState = {
         usedInCurrentMatch: false,
-        historyBuffer: [], // Lưu trữ tối đa 50 snapshots (mỗi snapshot cách nhau 0.1s = 5s)
+        historyBuffer: [], // Lưu trữ tối đa 50 snapshots (0.1s/lần = 5 giây)
         snapshotTimer: 0,
         isRewinding: false,
         rewindVfxTimer: 0
     };
 
-    // Hệ thống Tinh Linh Thời Không Cấp Cao (Pet Evolution & Loot Companion)
+    // Hệ thống Tinh Linh Thời Không (Pet Evolution & Loot Companion)
     const petState = {
         x: 1920,
         y: 1920,
@@ -86,12 +82,12 @@ window.Game = window.Game || {};
         phase: 0,
         fireTimer: 0,
         healTimer: 6.0,
-        quantumShieldTimer: 10.0, // Định kỳ 10s buff khiên lượng tử nếu đã tiến hóa
+        quantumShieldTimer: 10.0, // Định kỳ 10s buff khiên lượng tử cho người chơi
         trail: [],
-        mode: 'ORBIT', // 'ORBIT' | 'FETCHING' | 'RETURNING'
+        mode: 'ORBIT', // 'ORBIT' | 'FETCHING' | 'RETURN'
         targetLoot: null,
         carriedLoot: null,
-        fetchSpeed: 420
+        fetchSpeed: 460
     };
 
     // Hoạt ảnh Giật & Vung Vũ khí
@@ -119,9 +115,32 @@ window.Game = window.Game || {};
     // -------------------------------------------------------------------------
 
     function hasRelic(relicKey) {
-        if (!Game.state) return false;
-        if (Game.state.relics && Game.state.relics[relicKey]) return true;
-        if (Array.isArray(Game.state.equippedRelics) && Game.state.equippedRelics.includes(relicKey)) return true;
+        if (!relicKey) return false;
+
+        // Ưu tiên 1: Kiểm tra trực tiếp từ Game.Systems nếu đã sẵn sàng
+        if (window.Game && window.Game.Systems && typeof window.Game.Systems.hasEquippedRelic === 'function') {
+            return window.Game.Systems.hasEquippedRelic(relicKey);
+        }
+
+        // Ưu tiên 2: Fallback an toàn duyệt mảng Game.state.equippedRelics
+        if (!window.Game || !window.Game.state || !Array.isArray(window.Game.state.equippedRelics)) {
+            return false;
+        }
+
+        const equipped = window.Game.state.equippedRelics;
+        const resolveFn = (window.Game.Systems && typeof window.Game.Systems._resolveRelicKey === 'function')
+            ? window.Game.Systems._resolveRelicKey.bind(window.Game.Systems)
+            : null;
+
+        const targetCanonical = resolveFn ? resolveFn(relicKey) : relicKey;
+
+        for (let i = 0; i < equipped.length; i++) {
+            const item = equipped[i];
+            if (!item) continue;
+            if (item === relicKey || item === targetCanonical) return true;
+            if (resolveFn && resolveFn(item) === targetCanonical) return true;
+        }
+
         return false;
     }
 
@@ -134,7 +153,7 @@ window.Game = window.Game || {};
         if (isLowSettingActive) {
             return 1.0;
         }
-        // Giới hạn tối đa 1.5 trên mobile màn hình 2K/3K để chống giật nhưng giữ 120Hz mượt mà
+        // Khóa trần 1.5 trên màn hình độ phân giải siêu cao (2K/3K/4K) để đảm bảo 90Hz/120Hz ổn định
         return Math.min(window.devicePixelRatio || 1, 1.5);
     }
 
@@ -181,13 +200,23 @@ window.Game = window.Game || {};
             lastRecordedHp = player.hp;
             lastRecordedShield = player.shield;
         }
+
+        // Đồng bộ tham chiếu hai chiều liên tục
+        Game.state.player = player;
     }
 
     function isGamePausedOrModalOpen() {
         if (Game.state && Game.state.isPaused === true) return true;
         if (combatRecapData.isOpen) return true;
 
-        const modalIds = ['shop-modal', 'giftcode-modal', 'character-select-modal', 'settings-modal'];
+        const modalIds = [
+            'shop-modal',
+            'giftcode-modal',
+            'character-select-modal',
+            'settings-modal',
+            'backpack-modal'
+        ];
+
         for (let i = 0; i < modalIds.length; i++) {
             const m = document.getElementById(modalIds[i]);
             if (m && !m.classList.contains('hidden')) return true;
@@ -235,6 +264,15 @@ window.Game = window.Game || {};
         return Game.World.canMoveTo(targetX, targetY, Game.player.radius || 20);
     }
 
+    function isInsideCamera(x, y, radius, camera) {
+        return (
+            x + radius >= camera.x &&
+            x - radius <= camera.x + camera.width &&
+            y + radius >= camera.y &&
+            y - radius <= camera.y + camera.height
+        );
+    }
+
     function spawnCulledParticles(x, y, color, count, speed) {
         if (!Game.Combat || typeof Game.Combat._spawnParticles !== 'function') return;
         const cullFactor = isLowPerformanceMode ? 0.25 : 1.0;
@@ -251,7 +289,7 @@ window.Game = window.Game || {};
         if (!player || player.hp <= 0) return;
 
         quantumReviveState.snapshotTimer += dt;
-        // Ghi lại trạng thái mỗi 0.1 giây (10 snapshots/giây => 50 snapshots = 5 giây)
+        // Ghi nhận trạng thái mỗi 0.1s (10 snapshot/giây => 50 snapshot = 5 giây)
         if (quantumReviveState.snapshotTimer >= 0.1) {
             quantumReviveState.snapshotTimer = 0;
             quantumReviveState.historyBuffer.push({
@@ -272,7 +310,7 @@ window.Game = window.Game || {};
         const player = Game.player;
         const state = Game.state;
 
-        // Tua ngược về snapshot 5 giây trước (hoặc snapshot xa nhất có được)
+        // Tua ngược về snapshot 5 giây trước (snapshot cũ nhất trong buffer)
         const targetSnapshot = quantumReviveState.historyBuffer.length > 0 
             ? quantumReviveState.historyBuffer[0] 
             : { x: 1920, y: 1920 };
@@ -285,19 +323,44 @@ window.Game = window.Game || {};
         player.y = targetSnapshot.y;
         player.vx = 0;
         player.vy = 0;
-        player.hp = Math.round(player.maxHp * 0.50); // Hồi phục 50% Máu tối đa
-        player.shield = Math.round(player.maxShield * 0.50);
+        player.hp = Math.round(player.maxHp * 0.50); // Hồi 50% Máu tối đa
+        player.shield = Math.round(player.maxShield * 0.50); // Hồi 50% Giáp tối đa
         player.screenShake = 0.65;
 
-        // Hiệu ứng tia chớp đảo ngược thời gian và sóng xung kích lượng tử
+        // Phóng bão sấm sét lượng tử đẩy lùi và gây choáng toàn bộ quái vật xung quanh
+        const activeEnemies = (Game.Enemies && typeof Game.Enemies.getActiveList === 'function')
+            ? Game.Enemies.getActiveList()
+            : ((Game.Enemies && Game.Enemies.list) || []);
+
+        for (let i = 0; i < activeEnemies.length; i++) {
+            const e = activeEnemies[i];
+            if (!e || e.dead || e.hp <= 0) continue;
+            const dx = e.x - player.x;
+            const dy = e.y - player.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < 420) {
+                const angle = Math.atan2(dy, dx);
+                const pushDist = Math.max(120, 380 - dist);
+                e.x += Math.cos(angle) * pushDist * 0.5;
+                e.y += Math.sin(angle) * pushDist * 0.5;
+                e.stunTimer = Math.max(e.stunTimer || 0, 1.5); // Choáng 1.5s
+                
+                const lightningDmg = Math.round(80 + (state?.level || 1) * 12);
+                if (Game.Enemies && typeof Game.Enemies.damageEnemy === 'function') {
+                    Game.Enemies.damageEnemy(e, lightningDmg, true);
+                } else {
+                    e.hp -= lightningDmg;
+                }
+            }
+        }
+
         spawnCulledParticles(player.x, player.y, '#00f2fe', 45, 320);
         spawnCulledParticles(player.x, player.y, '#f59e0b', 35, 260);
 
         if (Game.Combat && typeof Game.Combat.spawnFloatingText === 'function') {
-            Game.Combat.spawnFloatingText(player.x, player.y - 45, '⚡ HỒI SINH LƯỢNG TỬ (5s REVERSE)!', '#00f2fe');
+            Game.Combat.spawnFloatingText(player.x, player.y - 45, '⚡ HỒI SINH LƯỢNG TỬ (TUA NGƯỢC 5S)!', '#00f2fe');
         }
         if (Game.Combat && Array.isArray(Game.Combat.laserBeams)) {
-            // Tia chớp lượng tử giáng từ bầu trời
             Game.Combat.laserBeams.push({
                 x1: player.x,
                 y1: player.y - 600,
@@ -305,16 +368,16 @@ window.Game = window.Game || {};
                 y2: player.y,
                 color: '#00f2fe',
                 coreColor: '#ffffff',
-                width: 24,
-                life: 0.5,
-                maxLife: 0.5
+                width: 26,
+                life: 0.55,
+                maxLife: 0.55
             });
         }
         if (Game.Audio && typeof Game.Audio.playTimeShift === 'function') {
             Game.Audio.playTimeShift();
         }
         if (Game.Systems && typeof Game.Systems.notify === 'function') {
-            Game.Systems.notify('⚡ Nghịch Lý Thời Gian: Hồi Sinh Lượng Tử được kích hoạt!', '#00f2fe');
+            Game.Systems.notify('⚡ Nghịch Lý Thời Không: Đã tua ngược thời gian sống sót!', '#00f2fe');
         }
     }
 
@@ -326,12 +389,11 @@ window.Game = window.Game || {};
         const player = Game.player;
         const isAeroBootsEquipped = hasRelic('relic_aero_boots');
 
-        // Tạo vệt lửa nếu đang di chuyển và có trang bị Aero Boots
+        // Chỉ sinh vệt lửa khi ĐANG TRANG BỊ Giày Phản Lực và đang di chuyển
         if (isAeroBootsEquipped && player && player.hp > 0) {
             const currentSpeed = Math.hypot(player.vx || 0, player.vy || 0);
             if (currentSpeed > 30) {
                 aeroBootsDropTimer += dt;
-                // Mỗi 0.08s nhả 1 đốm vệt lửa phản lực dưới chân
                 if (aeroBootsDropTimer >= 0.08) {
                     aeroBootsDropTimer = 0;
                     const jitterX = (Math.random() - 0.5) * 8;
@@ -340,18 +402,20 @@ window.Game = window.Game || {};
                         x: player.x + jitterX,
                         y: player.y + jitterY + 8,
                         radius: 22,
-                        life: 2.5,
+                        life: 2.5, // Tồn tại 2.5 giây
                         maxLife: 2.5,
                         tickTimer: 0
                     });
                 }
             }
+        } else {
+            aeroBootsDropTimer = 0;
         }
 
-        // Cập nhật vòng đời và gây sát thương/chậm lên quái vật bước vào vệt lửa
+        // Cập nhật vòng đời và sát thương/làm chậm của vệt lửa lên quái vật
         const activeEnemies = (Game.Enemies && typeof Game.Enemies.getActiveList === 'function')
             ? Game.Enemies.getActiveList()
-            : [];
+            : ((Game.Enemies && Game.Enemies.list) || []);
 
         for (let i = aeroBootsFireTrail.length - 1; i >= 0; i--) {
             const fire = aeroBootsFireTrail[i];
@@ -362,7 +426,7 @@ window.Game = window.Game || {};
             }
 
             fire.tickTimer += dt;
-            if (fire.tickTimer >= 0.25) { // Gây sát thương mỗi 0.25 giây
+            if (fire.tickTimer >= 0.25) { // Gây sát thương mỗi 0.25s
                 fire.tickTimer = 0;
                 const fireDmg = Math.round(18 + (Game.state?.level || 1) * 3.5);
 
@@ -371,7 +435,7 @@ window.Game = window.Game || {};
                     if (!e || e.dead || e.hp <= 0) continue;
                     const dist = Math.hypot(e.x - fire.x, e.y - fire.y);
                     if (dist <= fire.radius + (e.radius || 18)) {
-                        // Áp dụng thiêu đốt và làm chậm 30% trong 1.5s
+                        // Làm chậm 30% trong 1.5s và thiêu đốt
                         e.slowTimer = Math.max(e.slowTimer || 0, 1.5);
                         e.slowAmount = 0.30;
                         if (Game.Enemies && typeof Game.Enemies.damageEnemy === 'function') {
@@ -410,7 +474,7 @@ window.Game = window.Game || {};
 
         const activeEnemies = (Game.Enemies && typeof Game.Enemies.getActiveList === 'function')
             ? Game.Enemies.getActiveList()
-            : [];
+            : ((Game.Enemies && Game.Enemies.list) || []);
         let enemyNear = false;
         for (let i = 0; i < activeEnemies.length; i++) {
             const e = activeEnemies[i];
@@ -436,7 +500,7 @@ window.Game = window.Game || {};
             }
         }
 
-        // Cập nhật Combat Recap: Lưu vết DPS theo thời gian
+        // Cập nhật Combat Recap: Lưu vết DPS 30 giây gần nhất
         combatRecapData.matchDuration += dt;
         combatRecapData.secondTimer += dt;
         if (combatRecapData.secondTimer >= 1.0) {
@@ -459,7 +523,7 @@ window.Game = window.Game || {};
             fpsTimer = 0;
             Game.currentFps = Math.round(currentFps);
 
-            // Tự động kích hoạt chế độ tiết kiệm nếu FPS tụt sâu dưới 45
+            // Tự động kích hoạt Dynamic Scaling / Culling nếu FPS dưới 45 trong 3 giây liên tục
             if (currentFps < 45) {
                 lowFpsTimeCounter += 1.0;
                 if (lowFpsTimeCounter >= 3.0 && !isLowPerformanceMode) {
@@ -476,7 +540,7 @@ window.Game = window.Game || {};
 
                     resizeCanvas();
                     if (Game.Systems && typeof Game.Systems.notify === 'function') {
-                        Game.Systems.notify('Hiệu năng: Đã chuyển sang chế độ Siêu Mượt!', '#f59e0b');
+                        Game.Systems.notify('⚡ Hiệu năng: Đã bật Dynamic Scaling & Chế độ Tiết Kiệm GPU!', '#f59e0b');
                     }
                 }
             } else if (currentFps >= 55) {
@@ -492,48 +556,6 @@ window.Game = window.Game || {};
     function updateCharacterSkillsAndDefense(dt) {
         const player = Game.player;
 
-        if (shieldBreakNovaCd > 0) shieldBreakNovaCd = Math.max(0, shieldBreakNovaCd - dt);
-        if (quantumReviveState.rewindVfxTimer > 0) {
-            quantumReviveState.rewindVfxTimer = Math.max(0, quantumReviveState.rewindVfxTimer - dt);
-            if (quantumReviveState.rewindVfxTimer <= 0) {
-                quantumReviveState.isRewinding = false;
-            }
-        }
-
-        let hpLost = Math.max(0, lastRecordedHp - player.hp);
-        const shieldLost = Math.max(0, lastRecordedShield - player.shield);
-
-        // Giảm trừ sát thương nếu Pháo Đài Vực Thẳm (Iron Juggernaut) đang bật
-        if (hpLost > 0 && Game.Combat && Game.Combat.fortressTimer > 0) {
-            const mitigated = Math.round(hpLost * 0.60);
-            player.hp = Math.min(player.maxHp, player.hp + mitigated);
-            combatRecapData.damageMitigated += mitigated;
-            hpLost = Math.max(0, lastRecordedHp - player.hp);
-        }
-
-        if (hpLost > 0) {
-            combatRecapData.totalDamageTaken += hpLost;
-        }
-
-        updateCombatState(dt, hpLost, shieldLost);
-
-        // Vỡ Giáp & Phục hồi Giáp
-        if (hpLost > 0 || shieldLost > 0) {
-            player.shieldCooldown = 8.0;
-            stationaryOutCombatTimer = 0;
-
-            if (lastRecordedShield > 0 && player.shield <= 0) {
-                if (Game.Combat && typeof Game.Combat.spawnFloatingText === 'function') {
-                    Game.Combat.spawnFloatingText(player.x, player.y - 34, '💥 VỠ GIÁP!', '#00f2fe');
-                }
-                if (shieldBreakNovaCd <= 0) {
-                    shieldBreakNovaCd = 10.0;
-                    player.screenShake = Math.max(player.screenShake || 0, 0.35);
-                    spawnCulledParticles(player.x, player.y, '#00f2fe', 16, 200);
-                }
-            }
-        }
-
         // CƠ CHẾ: MẶT DÂY CHUYỀN BẤT KHUẤT (Last Stand Pendant - I.6)
         if (lastStandState.cooldown > 0) {
             lastStandState.cooldown = Math.max(0, lastStandState.cooldown - dt);
@@ -546,9 +568,16 @@ window.Game = window.Game || {};
         }
 
         const isLastStandEquipped = hasRelic('relic_last_stand');
+        // Nếu vừa tháo Cổ Vật ra khỏi Balo trong lúc đang có khiên thì hủy khiên ảo ngay lập tức
+        if (!isLastStandEquipped && lastStandState.shieldAmount > 0) {
+            lastStandState.shieldAmount = 0;
+            lastStandState.activeDuration = 0;
+        }
+
+        // Kích hoạt khiên ảo 50% HP trong 5s khi máu < 25% (Hồi chiêu 60s)
         if (isLastStandEquipped && player.hp > 0 && player.hp < player.maxHp * 0.25 && lastStandState.cooldown <= 0) {
-            lastStandState.cooldown = 60.0; // Hồi chiêu 60 giây
-            lastStandState.activeDuration = 5.0; // Tồn tại 5 giây
+            lastStandState.cooldown = 60.0;
+            lastStandState.activeDuration = 5.0;
             lastStandState.maxShieldAmount = Math.round(player.maxHp * 0.50);
             lastStandState.shieldAmount = lastStandState.maxShieldAmount;
 
@@ -561,6 +590,10 @@ window.Game = window.Game || {};
                 Game.Audio.playShieldBreak();
             }
         }
+
+        // Đồng bộ thuộc tính khiên ảo vào player cho Combat tính toán giảm sát thương
+        player.lastStandActive = (lastStandState.activeDuration > 0 && lastStandState.shieldAmount > 0);
+        player.lastStandShield = lastStandState.shieldAmount;
 
         // CƠ CHẾ: NHẪN HỒI PHỤC SINH MỆNH (Regen Ring - I.4)
         const isRegenRingEquipped = hasRelic('relic_regen_ring');
@@ -626,7 +659,6 @@ window.Game = window.Game || {};
 
         // KIỂM TRA MÁU TỤT VỀ 0 -> HỒI SINH LƯỢNG TỬ HOẶC PHẠT TỬ TRẬN
         if (player.hp <= 0) {
-            // Kiểm tra Hồi Sinh Lượng Tử (1 lần/trận)
             if (!quantumReviveState.usedInCurrentMatch) {
                 triggerQuantumRevive();
                 return;
@@ -642,7 +674,6 @@ window.Game = window.Game || {};
             player.vx = 0;
             player.vy = 0;
 
-            // Reset trạng thái trận đấu
             quantumReviveState.usedInCurrentMatch = false;
             quantumReviveState.historyBuffer.length = 0;
 
@@ -658,7 +689,7 @@ window.Game = window.Game || {};
             return;
         }
 
-        // Ghi lại Snapshot phục vụ tua ngược thời gian
+        // Ghi nhận Snapshot tua ngược thời gian
         recordPlayerChronoSnapshot(dt);
 
         // Cập nhật Vệt Lửa Aero Boots
@@ -738,7 +769,7 @@ window.Game = window.Game || {};
             player.vy = 0;
         }
 
-        // Hoạt ảnh vung / giật súng
+        // Hoạt ảnh vung / giật vũ khí
         const isAttackingNow = !!(Game.Controls && Game.Controls.buttons && Game.Controls.buttons.attack?.pressed);
         const wKey = state.currentWeapon || 'iron_sword';
         const isMelee = (wKey === 'iron_sword' || wKey === 'cyber_sword' || wKey === 'void_scythe');
@@ -776,12 +807,11 @@ window.Game = window.Game || {};
         const isEvolved = !!(state.petEvolved || (state.upgrades && state.upgrades.pet_evolution));
         const hasLootCompanion = !!(state.lootCompanion || (state.upgrades && state.upgrades.loot_companion) || isEvolved);
 
-        // KỸ NĂNG TIẾN HÓA: KHIÊN BẢO VỆ LƯỢNG TỬ MỖI 10 GIÂY (V.1)
+        // KỸ NĂNG TIẾN HÓA CẤP 2: KHIÊN LƯỢNG TỬ MỖI 10S
         if (isEvolved) {
             petState.quantumShieldTimer -= dt;
             if (petState.quantumShieldTimer <= 0) {
                 petState.quantumShieldTimer = 10.0;
-                // Buff Khiên Lượng Tử: hồi phục 30 Giáp hoặc tạo lá chắn khẩn cấp
                 player.shield = Math.min(player.maxShield, player.shield + 30);
                 spawnCulledParticles(player.x, player.y, '#00f2fe', 16, 120);
                 if (Game.Combat && typeof Game.Combat.spawnFloatingText === 'function') {
@@ -790,12 +820,11 @@ window.Game = window.Game || {};
             }
         }
 
-        // KỸ NĂNG TIẾN HÓA: TINH LINH NHẶT ĐỒ Ở XA BÁN KÍNH 650PX (V.2)
+        // KỸ NĂNG BẬC 3: QUÉT VÀ NHẶT VẬT PHẨM TRONG BÁN KÍNH 650PX
         const lootDrops = (Game.Enemies && Array.isArray(Game.Enemies.lootDrops)) ? Game.Enemies.lootDrops : [];
 
         if (hasLootCompanion) {
             if (petState.mode === 'ORBIT') {
-                // Quét tìm vật phẩm rơi gần nhất trong phạm vi 650px
                 let nearestLoot = null;
                 let minLootDist = 650;
 
@@ -814,7 +843,6 @@ window.Game = window.Game || {};
                     petState.targetLoot = nearestLoot;
                 }
             } else if (petState.mode === 'FETCHING') {
-                // Di chuyển nhanh về phía vật phẩm
                 const loot = petState.targetLoot;
                 if (!loot || loot.collected) {
                     petState.mode = 'RETURN';
@@ -824,7 +852,6 @@ window.Game = window.Game || {};
                     petState.x += Math.cos(toLootAngle) * petState.fetchSpeed * dt;
                     petState.y += Math.sin(toLootAngle) * petState.fetchSpeed * dt;
 
-                    // Khi chạm vào vật phẩm -> Thu thập và mang về
                     if (Math.hypot(loot.x - petState.x, loot.y - petState.y) < 24) {
                         loot.collected = true;
                         petState.carriedLoot = loot;
@@ -833,7 +860,6 @@ window.Game = window.Game || {};
                     }
                 }
             } else if (petState.mode === 'RETURN') {
-                // Quay trở lại vị trí người chơi
                 const toPlayerAngle = Math.atan2(player.y - petState.y, player.x - petState.x);
                 petState.x += Math.cos(toPlayerAngle) * petState.fetchSpeed * dt;
                 petState.y += Math.sin(toPlayerAngle) * petState.fetchSpeed * dt;
@@ -846,7 +872,7 @@ window.Game = window.Game || {};
                             if (Game.Combat && typeof Game.Combat.spawnFloatingText === 'function') {
                                 Game.Combat.spawnFloatingText(player.x, player.y - 25, `+${item.amount}G`, '#fbbf24');
                             }
-                        } else if (item.type === 'SHARD') {
+                        } else if (item.type === 'SHARD' || item.type === 'TIME_SHARD') {
                             state.timeShards = (state.timeShards || 0) + (item.amount || 1);
                             if (Game.Combat && typeof Game.Combat.spawnFloatingText === 'function') {
                                 Game.Combat.spawnFloatingText(player.x, player.y - 25, `+${item.amount} 💎`, '#38bdf8');
@@ -859,7 +885,7 @@ window.Game = window.Game || {};
             }
         }
 
-        // Chế độ bay lượn quanh người chơi thông thường
+        // Chế độ bay lượn quanh người chơi
         if (petState.mode === 'ORBIT') {
             petState.phase += dt * 2.8;
             const targetX = player.x + Math.cos(petState.phase) * 58;
@@ -869,7 +895,6 @@ window.Game = window.Game || {};
             petState.y += (targetY - petState.y) * Math.min(1, 14 * dt);
         }
 
-        // Giới hạn độ dài vết đuôi hạt Tinh Linh
         const maxTrailLength = isLowPerformanceMode ? 3 : 8;
         petState.trail.push({ x: petState.x, y: petState.y, life: 0.25 });
         if (petState.trail.length > maxTrailLength) petState.trail.shift();
@@ -878,7 +903,7 @@ window.Game = window.Game || {};
             if (petState.trail[i].life <= 0) petState.trail.splice(i, 1);
         }
 
-        // Hiệu ứng trị thương của Tinh Linh ở Kỷ Nguyên Quá Khứ (PAST)
+        // Hồi máu Kỷ Nguyên Quá Khứ (PAST)
         if (timeline === 'PAST') {
             petState.healTimer -= dt;
             if (petState.healTimer <= 0) {
@@ -895,12 +920,12 @@ window.Game = window.Game || {};
             petState.healTimer = 6.0;
         }
 
-        // Bắn Laser tự động của Tinh Linh
+        // Laser tự động của Tinh Linh
         petState.fireTimer -= dt;
         if (petState.fireTimer <= 0) {
             const enemies = (Game.Enemies && typeof Game.Enemies.getActiveList === 'function')
                 ? Game.Enemies.getActiveList()
-                : [];
+                : ((Game.Enemies && Game.Enemies.list) || []);
             let nearest = null;
             let minDist = 420;
             for (let i = 0; i < enemies.length; i++) {
@@ -971,7 +996,7 @@ window.Game = window.Game || {};
             const screenX = fire.x - camera.x;
             const screenY = fire.y - camera.y;
 
-            // Frustum Culling: Bỏ qua các vệt lửa ngoài khung nhìn
+            // Frustum Culling: Bỏ qua các vệt lửa ngoài khung nhìn camera
             if (screenX < -60 || screenX > camera.width + 60 || screenY < -60 || screenY > camera.height + 60) {
                 continue;
             }
@@ -1022,7 +1047,7 @@ window.Game = window.Game || {};
         const now = performance.now() * 0.001;
 
         ctx.save();
-        // Vòng sóng xung kích đảo ngược thời gian co cụm vào nhân vật
+        // Vòng sóng xung kích co cụm ngược về tâm nhân vật
         const shockRadius = Math.max(10, t * 180);
         ctx.strokeStyle = '#00f2fe';
         ctx.lineWidth = 3.5;
@@ -1481,7 +1506,7 @@ window.Game = window.Game || {};
             ctx.lineWidth = 1.6;
             ctx.stroke();
 
-            // Hiển thị túi đồ/tinh thể đang mang về khi nhặt đồ
+            // Hiển thị vật phẩm đang gắp mang về cho người chơi
             if (petState.carriedLoot) {
                 ctx.fillStyle = petState.carriedLoot.type === 'GOLD' ? '#fbbf24' : '#38bdf8';
                 ctx.beginPath();
@@ -1804,7 +1829,7 @@ window.Game = window.Game || {};
     function gameLoop(timestamp) {
         if (!lastTime) lastTime = timestamp;
 
-        // Delta Time Clamping: Khóa tối đa 0.05s để chống bay xuyên vật thể khi lag
+        // Delta Time Clamping: Khóa tối đa 0.05s để chống bay xuyên vật thể khi giật lag
         const rawDt = Math.min((timestamp - lastTime) / 1000, 0.05);
         lastTime = timestamp;
 
@@ -1837,15 +1862,36 @@ window.Game = window.Game || {};
             const dt = (player.hitStopTimer && player.hitStopTimer > 0) ? rawDt * 0.1 : rawDt;
             if (player.hitStopTimer > 0) player.hitStopTimer = Math.max(0, player.hitStopTimer - rawDt);
 
+            // BƯỚC QUAN TRỌNG: GÁN THAM CHIẾU PLAYER TRƯỚC TOÀN BỘ CÁC MODULE CON
+            Game.state.player = Game.player;
+
+            // Thứ tự cập nhật logic game chuẩn xác:
+            if (Game.Systems && typeof Game.Systems.update === 'function') {
+                Game.Systems.update(dt);
+            }
+            if (Game.World && typeof Game.World.update === 'function') {
+                Game.World.update(dt, player, Game.Enemies ? Game.Enemies.list : [], Game.Combat ? Game.Combat.bullets : []);
+            }
+            if (Game.AbyssAndBounties && typeof Game.AbyssAndBounties.update === 'function') {
+                Game.AbyssAndBounties.update(dt);
+            }
+            if (Game.TalentsAndTitles && typeof Game.TalentsAndTitles.updatePetCompanion === 'function') {
+                Game.TalentsAndTitles.updatePetCompanion(dt);
+            }
+
             updateCharacterSkillsAndDefense(rawDt);
             updatePlayerMovement(dt);
             updateTimePet(dt);
 
-            if (Game.Combat && typeof Game.Combat.update === 'function') Game.Combat.update(dt);
-            if (Game.Enemies && typeof Game.Enemies.update === 'function') Game.Enemies.update(dt);
+            if (Game.Combat && typeof Game.Combat.update === 'function') {
+                Game.Combat.update(dt);
+            }
+            if (Game.Enemies && typeof Game.Enemies.update === 'function') {
+                Game.Enemies.update(dt);
+            }
         }
 
-        // Camera bám theo người chơi mượt mà với quán tính cao
+        // Camera theo dõi người chơi mượt mà với quán tính cao
         const targetCamX = player.x - Game.camera.width / 2;
         const targetCamY = player.y - Game.camera.height / 2;
         if (!cameraInitialized || isNaN(Game.camera.x) || isNaN(Game.camera.y)) {
@@ -1890,25 +1936,45 @@ window.Game = window.Game || {};
         ctx.save();
         ctx.scale(zoom, zoom);
 
-        if (Game.World && typeof Game.World.draw === 'function') Game.World.draw(ctx, renderCamera);
+        if (Game.World && typeof Game.World.draw === 'function') {
+            Game.World.draw(ctx, renderCamera);
+        }
 
         // Dựng hình Vệt Lửa Phản Lực của Aero Boots
         drawAeroBootsFireTrail(ctx, renderCamera);
 
-        if (Game.Enemies && typeof Game.Enemies.draw === 'function') Game.Enemies.draw(ctx, renderCamera);
+        if (Game.Enemies && typeof Game.Enemies.draw === 'function') {
+            Game.Enemies.draw(ctx, renderCamera);
+        }
 
         drawPlayer(ctx, renderCamera);
         drawQuantumReviveVfx(ctx, renderCamera);
 
-        if (Game.Combat && typeof Game.Combat.draw === 'function') Game.Combat.draw(ctx, renderCamera);
+        if (Game.Combat && typeof Game.Combat.draw === 'function') {
+            Game.Combat.draw(ctx, renderCamera);
+        }
 
         ctx.restore();
 
-        // VẼ HUD & UI LỚP TĨNH THEO TỈ LỆ PIXEL THỰC MÀN HÌNH
+        // VẼ HUD & UI LỚP TĨNH THEO TỈ LỆ PIXEL THỰC MÀN HÌNH (SỬA LỖI MINIMAP)
         if (Game.World && typeof Game.World.drawMinimap === 'function') {
-            Game.World.drawMinimap(ctx, screenWidth, screenHeight);
+            // Định nghĩa chuẩn trong world.js nhận (ctx, player, enemies, screenWidth, screenHeight)
+            if (Game.World.drawMinimap.length >= 4) {
+                Game.World.drawMinimap(
+                    ctx,
+                    player,
+                    Game.Enemies ? (Game.Enemies.list || []) : [],
+                    screenWidth,
+                    screenHeight
+                );
+            } else {
+                // Fallback nếu bản custom world.js chỉ nhận (ctx, screenWidth, screenHeight)
+                Game.World.drawMinimap(ctx, screenWidth, screenHeight);
+            }
         }
+
         drawBossRaidOverlayAndZoneHud(ctx, screenWidth, screenHeight);
+
         if (Game.Controls && typeof Game.Controls.drawUI === 'function') {
             Game.Controls.drawUI(ctx, screenWidth, screenHeight, renderCamera);
         }
@@ -1965,13 +2031,13 @@ window.Game = window.Game || {};
         canvas = document.getElementById('gameCanvas');
         if (!canvas) return;
 
-        // Khởi tạo Canvas tối ưu hóa phần cứng, tắt kênh Alpha
-        ctx = canvas.getContext('2d', { alpha: false });
+        // Khởi tạo Canvas tối ưu hóa phần cứng, tắt kênh Alpha giúp GPU vẽ trực tiếp
+        ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
 
         resizeCanvas();
         window.addEventListener('resize', resizeCanvas);
 
-        // Lắng nghe click / chạm mở Combat Recap
+        // Lắng nghe click / chạm mở Combat Recap & Tương tác
         canvas.addEventListener('pointerdown', function (e) {
             const rect = canvas.getBoundingClientRect();
             const clickX = e.clientX - rect.left;

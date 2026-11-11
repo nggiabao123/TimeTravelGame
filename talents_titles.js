@@ -4,21 +4,23 @@
  * FILE: talents_titles.js (window.Game.TalentsAndTitles)
  * PHIÊN BẢN: 2026 Engine Overhaul - 120Hz Ultra Performance Edition
  * ============================================================================
- * CHỨC NĂNG CHÍNH:
- * 1. BẢNG THIÊN PHÚ BỔ TRỢ NGOÀI SẢNH CHÍNH (PASSIVE TALENT TREE - V.3):
- *    - 3 Nhánh lớn: Cuồng Chiến (Berserk), Pháo Đài Thời Không (Bulwark), Thần Tốc Thu Hoạch (Utility/Greed).
- *    - 24 nút thiên phú với chỉ số vĩnh viễn, tốn Gold & Mảnh Thời Không (Time Shards 💎).
- *    - Đồng bộ chỉ số trực tiếp với Game.player & Game.state (Crit Rate, Crit DMG, Armor, Speed, Magnet, Cooldown...).
- *    - UI Tree Modal (#talent-tree-modal), xử lý nâng cấp, hoàn trả (Reset), lưu trữ State.
+ * CÁC HẠNG MỤC HỆ THỐNG ĐÃ HOÀN THIỆN:
+ * 1. BẢNG THIÊN PHÚ BỔ TRỢ NGOẠI VI (PASSIVE TALENT TREE - V.3):
+ *    - 24 nút thiên phú chia đều 3 nhánh: Cuồng Chiến (8), Pháo Đài (8), Thần Tốc (8).
+ *    - Công thức scale chi phí Vàng và Mảnh Thời Không (Time Shards 💎) luỹ tiến.
+ *    - Reset All Talents: Hoàn trả chính xác 100% Vàng & Shards đã tiêu, reset stats tức thì.
+ *    - Hàm applyAllTalentsToPlayer() đồng bộ vĩnh viễn Crit, Crit DMG, Max HP, Shield, Armor,
+ *      Move Speed, Magnet Radius lên tối đa 450px, Greed x2 Drop Chance... vào Game.player & Game.state.
  * 
- * 2. HỆ THỐNG DANH HIỆU THỰC TẾ & HÀO QUANG (EQUIPPABLE TITLES - V.7):
- *    - 15 danh hiệu mở khóa qua thành tựu, nhiệm vụ, Abyss và Mini-Boss.
- *    - Buff chỉ số thực chiến + kích hoạt hào quang Canvas VFX tương ứng cho nhân vật.
- *    - UI Titles Modal (#titles-modal), logic equip/unequip, kiểm tra điều kiện tự động.
+ * 2. 15 DANH HIỆU THỰC CHIẾN & HÀO QUANG CANVAS VFX (V.7):
+ *    - Tự động kiểm tra mở khóa dựa trên Game.state.achievementStats (parry, diệt quái lưỡi hái, né hoàn hảo...).
+ *    - renderPlayerTitleAura() vẽ trực tiếp quanh nhân vật trên Canvas với 15 kiểu VFX độc quyền,
+ *      sử dụng tọa độ số nguyên (Bitwise OR `| 0`) tối ưu hóa cho màn hình 120 FPS.
  * 
- * 3. KỸ NĂNG NHÂN VẬT & TIẾN HÓA TINH LINH (SKILL TREE & PET EVOLUTION - III.1 -> III.10 & V.1, V.2):
- *    - 10 nút bổ trợ kỹ năng nhân vật chiến đấu (III.1 - III.10).
- *    - Tiến hóa Tinh Linh 3 Bậc (Pet Evolution: Khiên Lượng Tử & Loot Companion tự bay nhặt đồ xa).
+ * 3. KỸ NĂNG NHÂN VẬT & TIẾN HÓA TINH LINH (III.1 -> III.10 & V.1, V.2):
+ *    - Quản lý mở khóa 10 kỹ năng chuyên sâu theo từng nhân vật (Phân Thân Thời Gian, Bão Từ Hút Máu, ...).
+ *    - Hệ thống Tiến Hóa Tinh Linh 3 Bậc: Bậc 1 (Hồi máu/làm chậm), Bậc 2 (Phóng khiên lượng tử 120 điểm mỗi 15s),
+ *      Bậc 3 (Apex - Loot Companion tự bay nhặt đồ xa trong bán kính 650px).
  * ============================================================================
  */
 
@@ -316,7 +318,7 @@
                 costMultiplier: 1.6,
                 requires: 'utility_swift_step',
                 reqLevel: 3,
-                statsPerLevel: { magnetRadiusBonus: 66 }, // 120px + (5 * 66) = 450px!
+                statsPerLevel: { magnetRadiusBonus: 66 }, // 120px + (5 * 66) = 450px Max Pickup Radius
                 description: 'Mở rộng bán kính nam châm tự hút Vàng/EXP +66px (tối đa đạt 450px).'
             },
             utility_golden_fortune: {
@@ -793,7 +795,6 @@
         init: function () {
             if (this.initialized) return;
 
-            // Đảm bảo cấu trúc dữ liệu trong Game.state tồn tại
             if (!window.Game.state) {
                 window.Game.state = {};
             }
@@ -811,7 +812,7 @@
 
             // Danh hiệu đã mở khóa và đang trang bị
             if (!window.Game.state.unlockedTitles) {
-                window.Game.state.unlockedTitles = ['title_swordmaster']; // Cho sẵn danh hiệu tân thủ
+                window.Game.state.unlockedTitles = ['title_swordmaster'];
             }
             if (!window.Game.state.equippedTitle) {
                 window.Game.state.equippedTitle = 'title_swordmaster';
@@ -848,10 +849,7 @@
                 };
             }
 
-            // Lắng nghe sự kiện click nút bấm trong DOM (nếu có modal)
             this.bindDomEvents();
-
-            // Áp dụng chỉ số thiên phú vĩnh viễn vào player
             this.applyAllTalentsToPlayer();
             this.applyEquippedTitleStats();
 
@@ -859,15 +857,7 @@
             console.log('✅ [TalentsAndTitles] Khởi tạo thành công hệ thống Thiên Phú, Danh Hiệu & Tiến Hóa Tinh Linh.');
         },
 
-        // ====================================================================
-        // GẮN SỰ KIỆN GIAO DIỆN DOM & TAB SWITCHING
-        // ====================================================================
         bindDomEvents: function () {
-            // Lắng nghe đóng mở modal hoặc chuyển tab qua DOM
-            const modalTalents = document.getElementById('talent-tree-modal');
-            const modalTitles = document.getElementById('titles-modal');
-
-            // Nút mở Talent Modal (nếu có trong sảnh)
             const btnOpenTalents = document.getElementById('btn-open-talents');
             if (btnOpenTalents) {
                 btnOpenTalents.addEventListener('click', () => {
@@ -875,7 +865,6 @@
                 });
             }
 
-            // Nút mở Titles Modal (nếu có trong sảnh)
             const btnOpenTitles = document.getElementById('btn-open-titles');
             if (btnOpenTitles) {
                 btnOpenTitles.addEventListener('click', () => {
@@ -883,7 +872,6 @@
                 });
             }
 
-            // Nút Reset Talents trong modal
             const btnResetTalents = document.getElementById('btn-reset-talents');
             if (btnResetTalents) {
                 btnResetTalents.addEventListener('click', () => {
@@ -904,7 +892,6 @@
                 return { gold: 0, shards: 0, maxed: true };
             }
 
-            // Công thức cấp số nhân làm tròn nguyên: BaseCost * (Multiplier ^ currentLvl)
             const multiplier = Math.pow(config.costMultiplier, currentLvl);
             const goldCost = Math.round(config.costGoldPerLevel * multiplier);
             const shardCost = config.costShardsPerLevel > 0 
@@ -918,9 +905,6 @@
             };
         },
 
-        // ====================================================================
-        // KIỂM TRA ĐIỀU KIỆN MỞ KHÓA NÚT THIÊN PHÚ
-        // ====================================================================
         canUpgradeTalent: function (talentId) {
             const config = this.TALENTS_CONFIG[talentId];
             if (!config) return { canUpgrade: false, reason: 'Không tìm thấy thiên phú!' };
@@ -930,7 +914,6 @@
                 return { canUpgrade: false, reason: 'Thiên phú đã đạt cấp tối đa!' };
             }
 
-            // Kiểm tra nút yêu cầu tiên quyết (requires)
             if (config.requires) {
                 const parentLvl = window.Game.state.talents[config.requires] || 0;
                 const reqLevel = config.reqLevel || 1;
@@ -943,7 +926,6 @@
                 }
             }
 
-            // Kiểm tra tài nguyên
             const cost = this.getTalentCost(talentId);
             const currentGold = window.Game.state.gold || 0;
             const currentShards = window.Game.state.timeShards || 0;
@@ -965,37 +947,26 @@
             return { canUpgrade: true, cost: cost };
         },
 
-        // ====================================================================
-        // NÂNG CẤP NÚT THIÊN PHÚ (UPGRADE TALENT ACTION)
-        // ====================================================================
         upgradeTalent: function (talentId) {
             const check = this.canUpgradeTalent(talentId);
             if (!check.canUpgrade) {
                 if (window.Game.Systems && window.Game.Systems.showToastNotification) {
                     window.Game.Systems.showToastNotification(`⚠️ ${check.reason}`, 'warning');
-                } else {
-                    console.warn(`[Talents] Không thể nâng cấp: ${check.reason}`);
                 }
                 return false;
             }
 
             const cost = check.cost;
-            // Trừ tài nguyên
             window.Game.state.gold -= cost.gold;
             window.Game.state.timeShards -= cost.shards;
-
-            // Tăng cấp
             window.Game.state.talents[talentId] = (window.Game.state.talents[talentId] || 0) + 1;
 
-            // Lưu dữ liệu qua hệ thống Save
             if (window.Game.Systems && typeof window.Game.Systems.saveGame === 'function') {
                 window.Game.Systems.saveGame();
             }
 
-            // Áp dụng chỉ số mới ngay lập tức
             this.applyAllTalentsToPlayer();
 
-            // Âm thanh và hiệu ứng
             if (window.Game.Systems && typeof window.Game.Systems.playSound === 'function') {
                 window.Game.Systems.playSound('upgrade_success');
             }
@@ -1008,10 +979,8 @@
                 );
             }
 
-            // Cập nhật giao diện modal nếu đang mở
             this.renderTalentsTree();
 
-            // Cập nhật HUD Vàng & Shards ngoài sảnh
             if (window.Game.Systems && typeof window.Game.Systems.updateLobbyUI === 'function') {
                 window.Game.Systems.updateLobbyUI();
             }
@@ -1030,7 +999,6 @@
             let totalRefundGold = 0;
             let totalRefundShards = 0;
 
-            // Tính toán lượng tài nguyên cần hoàn trả
             Object.keys(this.TALENTS_CONFIG).forEach((talentId) => {
                 const config = this.TALENTS_CONFIG[talentId];
                 const allocatedLvl = window.Game.state.talents[talentId] || 0;
@@ -1045,24 +1013,19 @@
                     totalRefundShards += s;
                 }
 
-                // Reset về cấp 0
                 window.Game.state.talents[talentId] = 0;
             });
 
-            // Cộng trả tài nguyên vào túi đồ
             window.Game.state.gold = (window.Game.state.gold || 0) + totalRefundGold;
             window.Game.state.timeShards = (window.Game.state.timeShards || 0) + totalRefundShards;
 
-            // Lưu game
             if (window.Game.Systems && typeof window.Game.Systems.saveGame === 'function') {
                 window.Game.Systems.saveGame();
             }
 
-            // Tái tính toán chỉ số người chơi
             this.applyAllTalentsToPlayer();
-
-            // Refresh giao diện
             this.renderTalentsTree();
+
             if (window.Game.Systems && typeof window.Game.Systems.updateLobbyUI === 'function') {
                 window.Game.Systems.updateLobbyUI();
             }
@@ -1083,7 +1046,6 @@
             const state = window.Game.state;
             if (!state || !state.talents) return;
 
-            // Tạo bộ đệm tổng hợp chỉ số cộng thêm từ thiên phú
             const bonuses = {
                 meleeDamagePercent: 0,
                 rangedDamagePercent: 0,
@@ -1125,7 +1087,6 @@
                 allItemBuffDurationSec: 0
             };
 
-            // Lặp qua từng thiên phú và cộng dồn theo cấp độ
             Object.keys(this.TALENTS_CONFIG).forEach((talentId) => {
                 const lvl = state.talents[talentId] || 0;
                 if (lvl <= 0) return;
@@ -1145,12 +1106,9 @@
                 });
             });
 
-            // Lưu bộ đệm vào state để các hệ thống Combat, Enemies truy xuất dễ dàng
             state.talentBonuses = bonuses;
 
-            // Nếu thực thể player đã được spawn, cập nhật trực tiếp thuộc tính
             if (player) {
-                // Máu tối đa và khiên tối đa
                 const baseHp = player.characterBaseHp || 100;
                 player.maxHp = baseHp + bonuses.maxHpBonus;
                 if (player.hp > player.maxHp) player.hp = player.maxHp;
@@ -1158,41 +1116,25 @@
                 const baseShield = player.characterBaseShield || 50;
                 player.maxShield = baseShield + bonuses.maxShieldBonus;
 
-                // Giáp cơ bản
                 player.armor = (player.characterBaseArmor || 0) + bonuses.baseArmor;
 
-                // Tốc độ di chuyển cơ bản
                 const baseSpeed = player.characterBaseSpeed || 190;
                 player.speed = baseSpeed + bonuses.moveSpeedBonus;
 
-                // Tỉ lệ chí mạng & Sát thương chí mạng
-                player.critChance = 0.05 + bonuses.critRate; // Base 5%
-                player.critMultiplier = 1.5 + bonuses.critDamage; // Base 150%
+                player.critChance = 0.05 + bonuses.critRate;
+                player.critMultiplier = 1.5 + bonuses.critDamage;
 
-                // Bán kính nam châm nhặt đồ (Từ mặc định 120px lên đến tối đa 450px)
-                player.pickupRadius = 120 + bonuses.magnetRadiusBonus;
-
-                // Hồi máu mỗi giây
+                // Giới hạn bán kính nam châm tối đa 450px
+                player.pickupRadius = Math.min(450, 120 + bonuses.magnetRadiusBonus);
                 player.hpRegenRate = bonuses.hpRegenPerSecond;
-
-                // Tỉ lệ nhân đôi Vàng / EXP (Greed)
                 player.doubleDropChance = bonuses.doubleGoldExpChance;
-
-                // Giảm hồi chiêu kỹ năng (%)
-                player.cooldownReduction = Math.min(0.60, bonuses.cooldownReductionPercent / 100); // Capped 60%
-
-                // Bỏ qua giáp & Hút máu
+                player.cooldownReduction = Math.min(0.60, bonuses.cooldownReductionPercent / 100);
                 player.armorPenetration = bonuses.armorPenetrationPercent;
                 player.lifeSteal = bonuses.lifeStealPercent;
-
-                // Động cơ súng laser giải nhiệt
                 player.heatCoolBonus = bonuses.heatCooldownRateBonus;
             }
         },
 
-        // ====================================================================
-        // ÁP DỤNG CHỈ SỐ DANH HIỆU ĐANG TRANG BỊ
-        // ====================================================================
         applyEquippedTitleStats: function () {
             const state = window.Game.state;
             const player = window.Game.player;
@@ -1204,7 +1146,6 @@
             state.activeTitleStats = titleConfig.stats || {};
             state.activeTitleAura = titleConfig.auraType || null;
 
-            // Áp dụng nếu có buff toàn bộ chỉ số (allStatsPercent) như Chúa Tể Thời Không
             if (player && state.activeTitleStats.allStatsPercent) {
                 const bonusRatio = 1 + (state.activeTitleStats.allStatsPercent / 100);
                 player.maxHp = Math.round(player.maxHp * bonusRatio);
@@ -1213,9 +1154,6 @@
             }
         },
 
-        // ====================================================================
-        // RENDER GIAO DIỆN CÂY THIÊN PHÚ VÀO #talent-tree-modal
-        // ====================================================================
         renderTalentsTree: function () {
             const modalBody = document.querySelector('#talent-tree-modal .modal-body') || 
                               document.getElementById('talent-tree-container');
@@ -1225,7 +1163,6 @@
             const currentGold = state.gold || 0;
             const currentShards = state.timeShards || 0;
 
-            // HTML Header: Tabs chọn nhánh, số dư tài nguyên và nút Tẩy Điểm
             let html = `
                 <div class="talents-header-bar">
                     <div class="talents-currency-display">
@@ -1253,12 +1190,9 @@
                 <div class="talents-nodes-grid branch-${this.activeTab}">
             `;
 
-            // Lọc danh sách các nút thiên phú thuộc nhánh đang chọn
             const talentsInBranch = Object.values(this.TALENTS_CONFIG).filter(
                 (item) => item.branch === this.activeTab
             );
-
-            // Sắp xếp theo Tier tăng dần
             talentsInBranch.sort((a, b) => a.tier - b.tier);
 
             talentsInBranch.forEach((talent) => {
@@ -1274,7 +1208,6 @@
                     statusClass = 'available';
                 }
 
-                // Kiểm tra điều kiện phụ thuộc
                 let reqHtml = '';
                 if (talent.requires) {
                     const parentConfig = this.TALENTS_CONFIG[talent.requires];
@@ -1332,7 +1265,6 @@
             modalBody.innerHTML = html;
         },
 
-        // Chuyển đổi tab nhánh cây thiên phú
         switchBranchTab: function (branch) {
             this.activeTab = branch;
             this.renderTalentsTree();
@@ -1354,14 +1286,10 @@
                 modal.style.display = 'none';
             }
         },
-// ====================================================================
+
+        // ====================================================================
         // V. HỆ THỐNG DANH HIỆU: KIỂM TRA MỞ KHÓA, TRANG BỊ & RENDER MODAL
         // ====================================================================
-
-        /**
-         * Kiểm tra tự động các điều kiện thành tựu chiến đấu để mở khóa danh hiệu mới
-         * Được gọi từ Combat sau mỗi đòn đánh, hạ gục boss, kết thúc ải hoặc nhặt tài nguyên
-         */
         checkTitleUnlocks: function () {
             const state = window.Game.state;
             if (!state || !state.achievementStats) return;
@@ -1374,7 +1302,6 @@
             let newlyUnlocked = [];
 
             Object.keys(this.TITLES_CONFIG).forEach((titleId) => {
-                // Nếu chưa mở khóa thì mới kiểm tra
                 if (!state.unlockedTitles.includes(titleId)) {
                     const config = this.TITLES_CONFIG[titleId];
                     if (config && typeof config.checkUnlock === 'function') {
@@ -1386,7 +1313,6 @@
                 }
             });
 
-            // Nếu có danh hiệu mới được mở khóa, thông báo vinh danh trên màn hình
             if (newlyUnlocked.length > 0) {
                 newlyUnlocked.forEach((title) => {
                     if (window.Game.Systems && typeof window.Game.Systems.showToastNotification === 'function') {
@@ -1400,20 +1326,14 @@
                     }
                 });
 
-                // Lưu dữ liệu game
                 if (window.Game.Systems && typeof window.Game.Systems.saveGame === 'function') {
                     window.Game.Systems.saveGame();
                 }
 
-                // Cập nhật lại giao diện danh hiệu nếu đang mở
                 this.renderTitlesModal();
             }
         },
 
-        /**
-         * Trang bị một danh hiệu cụ thể cho nhân vật
-         * @param {string} titleId 
-         */
         equipTitle: function (titleId) {
             const state = window.Game.state;
             if (!state || !state.unlockedTitles) return false;
@@ -1447,9 +1367,6 @@
             return true;
         },
 
-        /**
-         * Tháo danh hiệu hiện tại
-         */
         unequipTitle: function () {
             const state = window.Game.state;
             if (!state) return;
@@ -1469,9 +1386,6 @@
             this.renderTitlesModal();
         },
 
-        /**
-         * Render toàn bộ danh sách 15 danh hiệu vào #titles-modal
-         */
         renderTitlesModal: function () {
             const modalBody = document.querySelector('#titles-modal .modal-body') || 
                               document.getElementById('titles-container');
@@ -1505,7 +1419,6 @@
                 const isUnlocked = unlockedList.includes(title.id);
                 const isEquipped = (equippedId === title.id);
 
-                // Ghép chuỗi chỉ số cộng thêm
                 let statsBuffText = [];
                 if (title.stats.meleeDamagePercent) statsBuffText.push(`+${title.stats.meleeDamagePercent}% Cận chiến`);
                 if (title.stats.swordWaveSpeedPercent) statsBuffText.push(`+${title.stats.swordWaveSpeedPercent}% Tốc độ kiếm khí`);
@@ -1593,11 +1506,6 @@
         // ====================================================================
         // VI. HIỆU ỨNG HÀO QUANG THỰC CHIẾN (CANVAS AURA VFX - 120HZ OPTIMIZED)
         // ====================================================================
-
-        /**
-         * Vẽ Hào Quang tương ứng với danh hiệu đang đeo trực tiếp trên Canvas xung quanh Player
-         * Tối ưu hóa: Dùng tọa độ số nguyên (x | 0), không lạm dụng shadowBlur nếu bật chế độ Ultra Performance
-         */
         renderPlayerTitleAura: function (ctx, player, camera) {
             const state = window.Game.state;
             if (!state || !state.equippedTitle || !player) return;
@@ -1652,7 +1560,6 @@
                     ctx.stroke();
                     ctx.setLineDash([]);
 
-                    // Tia điện vàng nhấp nháy
                     const sparkAngle = (time * 8) % (Math.PI * 2);
                     const sx = px + Math.cos(sparkAngle) * (r + 4);
                     const sy = py + Math.sin(sparkAngle) * (r + 4);
@@ -1672,7 +1579,6 @@
                     ctx.arc(px, py, 42, 0, Math.PI * 2);
                     ctx.fill();
 
-                    // Vòng nguyệt đao mờ
                     ctx.strokeStyle = 'rgba(255, 23, 68, 0.6)';
                     ctx.lineWidth = 1.5;
                     ctx.beginPath();
@@ -1721,21 +1627,18 @@
                     const haloR1 = 44;
                     const haloR2 = 30;
 
-                    // Vòng ngoài màu tím huyền bí
                     ctx.strokeStyle = 'rgba(213, 0, 249, 0.85)';
                     ctx.lineWidth = 2;
                     ctx.beginPath();
                     ctx.arc(px, py, haloR1, time * 1.5, time * 1.5 + Math.PI * 1.3);
                     ctx.stroke();
 
-                    // Vòng trong nghịch chiều kim đồng hồ
                     ctx.strokeStyle = 'rgba(0, 229, 255, 0.85)';
                     ctx.lineWidth = 1.8;
                     ctx.beginPath();
                     ctx.arc(px, py, haloR2, -time * 2, -time * 2 + Math.PI * 1.3);
                     ctx.stroke();
 
-                    // Các ký tự lượng tử quay quanh
                     const qx = (px + Math.cos(time * 3) * haloR1) | 0;
                     const qy = (py + Math.sin(time * 3) * haloR1) | 0;
                     ctx.fillStyle = '#ffffff';
@@ -1751,7 +1654,6 @@
                     ctx.arc(px, py, cr, 0, Math.PI * 2);
                     ctx.stroke();
 
-                    // 4 vạch ngắm
                     for (let k = 0; k < 4; k++) {
                         const kang = (k * Math.PI / 2) + (time * 0.8);
                         ctx.beginPath();
@@ -1787,7 +1689,7 @@
                     break;
                 }
 
-                case 'void_portal_swirl': { // Kẻ Chinh Phục Vực Thẳm: Vòng xoáy hư không màu tím đậm
+                case 'void_portal_swirl': { // Kẻ Chinh Phục Vực Thẳm: Vòng xoáy hư không
                     ctx.strokeStyle = 'rgba(224, 64, 251, 0.7)';
                     ctx.lineWidth = 2.5;
                     ctx.beginPath();
@@ -1813,7 +1715,7 @@
                     break;
                 }
 
-                case 'prismatic_feather': { // Tuyệt Đối Vô Thương: Hào quang bạch kim tinh khiết
+                case 'prismatic_feather': { // Tuyệt Đối Vô Thương: Hào quang bạch kim
                     const pR = 36 + Math.sin(time * 4) * 4;
                     ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
                     ctx.lineWidth = 2;
@@ -1870,21 +1772,12 @@
         // ====================================================================
         // VII. NHÁNH KỸ NĂNG NHÂN VẬT (CHARACTER SKILLS III.1 -> III.10)
         // ====================================================================
-
-        /**
-         * Kiểm tra nhân vật đã học kỹ năng chưa
-         * @param {string} skillId 
-         */
         hasSkill: function (skillId) {
             const state = window.Game.state;
             if (!state || !Array.isArray(state.unlockedSkills)) return false;
             return state.unlockedSkills.includes(skillId);
         },
 
-        /**
-         * Điều kiện mở khóa kỹ năng nhân vật
-         * @param {string} skillId 
-         */
         canUnlockSkill: function (skillId) {
             const config = this.SKILLS_CONFIG[skillId];
             if (!config) return { canUnlock: false, reason: 'Kỹ năng không tồn tại!' };
@@ -1894,7 +1787,6 @@
                 return { canUnlock: false, reason: 'Kỹ năng này đã được mở khóa!' };
             }
 
-            // Kiểm tra hệ phái nhân vật yêu cầu
             if (config.characterReq !== 'all') {
                 const currentHero = state.selectedCharacterId || (window.Game.player && window.Game.player.characterId);
                 if (currentHero && currentHero !== config.characterReq) {
@@ -1905,7 +1797,6 @@
                 }
             }
 
-            // Kiểm tra Vàng & Mảnh thời không
             const curGold = state.gold || 0;
             const curShards = state.timeShards || 0;
 
@@ -1919,10 +1810,6 @@
             return { canUnlock: true, config: config };
         },
 
-        /**
-         * Thực hiện mở khóa kỹ năng nhân vật
-         * @param {string} skillId 
-         */
         unlockSkill: function (skillId) {
             const check = this.canUnlockSkill(skillId);
             if (!check.canUnlock) {
@@ -1939,7 +1826,6 @@
             state.timeShards -= config.shardsCost;
             state.unlockedSkills.push(skillId);
 
-            // Gán hiệu ứng trực tiếp vào player nếu đang trong trận
             if (window.Game.player && config.effectKey) {
                 window.Game.player[config.effectKey] = true;
             }
@@ -1962,17 +1848,10 @@
             return true;
         },
 
-        /**
-         * Render giao diện mở khóa Kỹ Năng Nhân Vật vào Modal hoặc Tab
-         */
         renderSkillsModal: function () {
             const container = document.getElementById('character-skills-container') || 
                               document.querySelector('#skills-modal .modal-body');
             if (!container) return;
-
-            const state = window.Game.state;
-            const curGold = state.gold || 0;
-            const curShards = state.timeShards || 0;
 
             let html = `
                 <div class="skills-modal-header">
@@ -2023,19 +1902,12 @@
         // ====================================================================
         // VIII. TIẾN HÓA TINH LINH & LOOT COMPANION (PET EVOLUTION - V.1, V.2)
         // ====================================================================
-
-        /**
-         * Lấy thông số Bậc hiện tại của Tinh Linh
-         */
         getPetCurrentConfig: function () {
             const state = window.Game.state;
             const stageIndex = ((state ? state.petEvolutionStage : 1) || 1) - 1;
             return this.PET_EVOLUTION_STAGES[stageIndex] || this.PET_EVOLUTION_STAGES[0];
         },
 
-        /**
-         * Kiểm tra điều kiện tiến hóa lên bậc kế tiếp
-         */
         canEvolvePet: function () {
             const state = window.Game.state;
             const curStage = (state && state.petEvolutionStage) ? state.petEvolutionStage : 1;
@@ -2043,7 +1915,7 @@
                 return { canEvolve: false, reason: 'Tinh Linh đã đạt Bậc 3 Tối Thượng (Apex)!' };
             }
 
-            const nextConfig = this.PET_EVOLUTION_STAGES[curStage]; // index = curStage
+            const nextConfig = this.PET_EVOLUTION_STAGES[curStage];
             const curGold = state.gold || 0;
             const curShards = state.timeShards || 0;
 
@@ -2057,9 +1929,6 @@
             return { canEvolve: true, nextConfig: nextConfig };
         },
 
-        /**
-         * Thực hiện Tiến Hóa Tinh Linh
-         */
         evolvePet: function () {
             const check = this.canEvolvePet();
             if (!check.canEvolve) {
@@ -2080,7 +1949,6 @@
                 window.Game.Systems.saveGame();
             }
 
-            // Kiểm tra mở khóa danh hiệu "Bậc Thầy Tinh Linh"
             this.checkTitleUnlocks();
 
             if (window.Game.Systems && window.Game.Systems.showToastNotification) {
@@ -2097,9 +1965,6 @@
             return true;
         },
 
-        /**
-         * Render giao diện nâng cấp Tiến Hóa Tinh Linh
-         */
         renderPetEvolutionUI: function () {
             const container = document.getElementById('pet-evolution-container') || 
                               document.querySelector('#shop-modal .pet-evolution-tab');
@@ -2177,10 +2042,6 @@
             floatingAngle: 0
         },
 
-        /**
-         * Cập nhật hành vi Tinh Linh mỗi khung hình (60 - 120 FPS)
-         * @param {number} dt Delta time (giây)
-         */
         updatePetCompanion: function (dt) {
             const player = window.Game.player;
             if (!player || player.hp <= 0) return;
@@ -2188,7 +2049,6 @@
             const petConfig = this.getPetCurrentConfig();
             const pet = this.petEntity;
 
-            // Khởi tạo tọa độ ban đầu theo người chơi
             if (pet.x === 0 && pet.y === 0) {
                 pet.x = player.x - 30;
                 pet.y = player.y - 30;
@@ -2196,9 +2056,7 @@
 
             pet.floatingAngle += dt * 3;
 
-            // ----------------------------------------------------------------
-            // 1. Logic Hồi Máu Định Kỳ Cho Player
-            // ----------------------------------------------------------------
+            // 1. Logic hồi máu
             pet.healTimer += dt;
             if (pet.healTimer >= petConfig.features.healIntervalSec) {
                 pet.healTimer = 0;
@@ -2215,13 +2073,10 @@
                 }
             }
 
-            // ----------------------------------------------------------------
-            // 2. Logic Phóng Khiên Lượng Tử (Stage 2+)
-            // ----------------------------------------------------------------
+            // 2. Logic phóng khiên lượng tử (Bậc 2+)
             if (petConfig.features.hasShieldProjection) {
                 pet.shieldTimer += dt;
                 if (pet.shieldTimer >= petConfig.features.shieldCooldownSec) {
-                    // Nếu khiên người chơi thấp, cấp thêm khiên
                     if ((player.shield || 0) < petConfig.features.shieldAmount) {
                         player.shield = petConfig.features.shieldAmount;
                         pet.shieldTimer = 0;
@@ -2237,9 +2092,7 @@
                 }
             }
 
-            // ----------------------------------------------------------------
-            // 3. Logic Nhặt Đồ Tự Động (Loot Companion - Stage 3 Apex)
-            // ----------------------------------------------------------------
+            // 3. Logic nhặt đồ xa (Loot Companion - Bậc 3 Apex bán kính 650px)
             let targetFound = false;
 
             if (petConfig.features.lootCompanion) {
@@ -2247,7 +2100,6 @@
                               (window.Game.world && window.Game.world.drops) || [];
                 const maxLootDistSq = petConfig.features.lootDistance * petConfig.features.lootDistance;
 
-                // Tìm vật phẩm gần nhất nằm ngoài bán kính của người chơi nhưng trong tầm pet
                 let closestDrop = null;
                 let minDistSq = maxLootDistSq;
 
@@ -2259,7 +2111,7 @@
                     const dy = drop.y - player.y;
                     const distToPlayerSq = dx * dx + dy * dy;
 
-                    // Chỉ bay đi nhặt đồ ở xa người chơi (> 130px) để không tranh chấp với Magnet của người
+                    // Chỉ bay đi nhặt đồ ở ngoài tầm với bình thường của player
                     if (distToPlayerSq > 16900 && distToPlayerSq <= maxLootDistSq) {
                         const pdx = drop.x - pet.x;
                         const pdy = drop.y - pet.y;
@@ -2277,13 +2129,11 @@
                     pet.isLooting = true;
                     pet.targetDrop = closestDrop;
 
-                    // Bay tới vật phẩm với tốc độ cao
                     const flySpeed = petConfig.features.petFlySpeed || 420;
                     const angle = Math.atan2(closestDrop.y - pet.y, closestDrop.x - pet.x);
                     pet.x += Math.cos(angle) * flySpeed * dt;
                     pet.y += Math.sin(angle) * flySpeed * dt;
 
-                    // Nếu chạm vào drop, nhặt drop và trả về cho người chơi
                     const collectDx = closestDrop.x - pet.x;
                     const collectDy = closestDrop.y - pet.y;
                     if (collectDx * collectDx + collectDy * collectDy < 625) { // < 25px
@@ -2297,7 +2147,7 @@
                 }
             }
 
-            // Nếu không đi nhặt đồ ở xa, bay lơ lửng quanh vai người chơi
+            // Bay lơ lửng hộ tống cạnh player khi rảnh rỗi
             if (!targetFound) {
                 pet.isLooting = false;
                 pet.targetDrop = null;
@@ -2307,17 +2157,11 @@
                 const idealX = player.x + hoverOffsetX;
                 const idealY = player.y + hoverOffsetY;
 
-                // Di chuyển mượt mà về vị trí hộ tống
                 pet.x += (idealX - pet.x) * 6.5 * dt;
                 pet.y += (idealY - pet.y) * 6.5 * dt;
             }
         },
 
-        /**
-         * Vẽ Tinh Linh lên Canvas
-         * @param {CanvasRenderingContext2D} ctx 
-         * @param {object} camera 
-         */
         renderPetCompanion: function (ctx, camera) {
             const player = window.Game.player;
             if (!player || player.hp <= 0) return;
@@ -2331,7 +2175,7 @@
 
             ctx.save();
 
-            // Nếu đang đi nhặt đồ xa, vẽ tia liên kết lượng tử nối từ vai Player tới Pet
+            // Vẽ tia dẫn hướng khi nhặt đồ xa
             if (pet.isLooting) {
                 const playerScreenX = ((player.x - (camera ? camera.x : 0)) | 0);
                 const playerScreenY = ((player.y - (camera ? camera.y : 0)) | 0);
@@ -2346,7 +2190,7 @@
                 ctx.setLineDash([]);
             }
 
-            // Hào quang phát sáng của Tinh Linh
+            // Hào quang Tinh Linh
             const auraGrad = ctx.createRadialGradient(screenX, screenY, 3, screenX, screenY, 18);
             if (petConfig.stage === 1) {
                 auraGrad.addColorStop(0, 'rgba(0, 230, 118, 0.8)');
@@ -2363,7 +2207,7 @@
             ctx.arc(screenX, screenY, 18, 0, Math.PI * 2);
             ctx.fill();
 
-            // Đôi cánh tinh linh vỗ liên tục
+            // Đôi cánh tinh linh
             ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
             ctx.beginPath();
             ctx.ellipse(screenX - 7, screenY - 2, 7, Math.abs(wingFlap) + 2, Math.PI / 4, 0, Math.PI * 2);
@@ -2373,13 +2217,13 @@
             ctx.ellipse(screenX + 7, screenY - 2, 7, Math.abs(wingFlap) + 2, -Math.PI / 4, 0, Math.PI * 2);
             ctx.fill();
 
-            // Thân thể tinh linh (Khối ngọc lượng tử)
+            // Thân thể tinh linh
             ctx.fillStyle = (petConfig.stage === 3) ? '#ffd700' : '#ffffff';
             ctx.beginPath();
             ctx.arc(screenX, screenY, 5, 0, Math.PI * 2);
             ctx.fill();
 
-            // Vương miện nhỏ trên đầu nếu đạt Bậc 3 Tối Thượng
+            // Vương miện nhỏ Bậc 3 Tối Thượng
             if (petConfig.stage === 3) {
                 ctx.fillStyle = '#ffea00';
                 ctx.beginPath();
@@ -2396,10 +2240,8 @@
         }
     };
 
-    // Đăng ký module vào window.Game
     window.Game.TalentsAndTitles = TalentsAndTitles;
 
-    // Tự động khởi tạo khi tài liệu DOM sẵn sàng
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
             TalentsAndTitles.init();

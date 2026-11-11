@@ -1,27 +1,30 @@
 /**
  * ============================================================================
- * TỰA GAME: KẺ DU HÀNH THỜI KHÔNG (TIME TRAVELER)
- * FILE: combat.js - ENGINE TÁC CHIẾN CHUYÊN SÂU 60 FPS (PHẦN 1)
+ * TỰA GAME: KẺ DU HÀNH THỜI KHÔNG (TIME TRAVELER 2D ARPG)
+ * MODULE: combat.js - ENGINE CHIẾN ĐẤU ZERO-GC (PHẦN 1 / 2)
+ * CHUẨN HIỆU NĂNG: 60 - 120 FPS CANVAS TRÊN THIẾT BỊ DI ĐỘNG
  * ============================================================================
- * TÍCH HỢP ĐẦY ĐỦ CÁC CƠ CHẾ NÂNG CẤP VÀ TỐI ƯU HÓA:
- * 1. Kính Hồng Ngoại Cảnh Báo (Sniper Scope - I.7): +25% tầm & góc ngắm laser_gun.
- * 2. Bộ Lưu Trữ Lượng Tử (Quantum Battery - I.8): Mở rộng rage tối đa lên 200.
- * 3. Móng Vuốt Ma Cà Rồng (Blood Claws - I.9): 10% hút máu cận chiến + Chảy Máu.
- * 4. Lõi Gia Tốc Hồi Chiêu (Haste Matrix - I.10): maxCd * 0.8 khi có relic_haste_matrix.
- * 5. Kiếm Khí Tam Phân (Split Slash - II.1): Đòn 3 cận chiến bắn 3 luồng (-0.22, 0, +0.22).
- * 6. Laser Phản Xạ Đa Điểm (Prism Laser - II.2): Nảy sang 2 mục tiêu lân cận trong 220px.
- * 7. Pháo Trọng Lực Hút Quái (Gravity Shell - II.3): Hút quái trong 180px trước khi nổ.
- * 8. Lưỡi Hái Huyết Nguyệt (Blood Scythe - II.4): +30% bán kính xoay, hồi máu khi hạ quái.
- * 9. Sấm Sét Lan Truyền (Chain Lightning - II.5): Đòn chí mạng nảy sét 4 mục tiêu.
- * 10. Đòn Đánh Thiêu Đốt (Napalm Coating - II.6): Quá nhiệt >= 50 đốt 3% HP max/s.
- * 11. Chém Xuyên Giáp (Armor Piercing - II.7): Bỏ qua 50% giảm thương của khiên Tanker.
- * 12. Đạn Nảy Bật Tường (Ricochet Rounds - II.8): Đạn bật tường dội về kẻ địch gần nhất.
- * 13. Bùng Nổ Tro Tàn (Corpse Explosion - II.9): Quái chết nổ 15% HP max trong 130px.
- * 14. Kiếm Năng Lượng Đảo Chiều (Parry Master - II.10): Đạn phản xạ +300% sát thương chí mạng.
- * 15. Kỹ năng nhân vật III.1 -> III.9 (Phân Thân Thời Gian, Bão Từ Hút Máu, Vùng Ngưng Đọng
- *     Vĩnh Cửu, Tốc Biến Đa Tầng 2 tích lũy, Án Tử Tốc Độ, Pháo Đài Xung Kích 200px,
- *     Hồi Nộ Thần Tốc né hoàn hảo +30% Nộ, Vòng Bảo Hộ Sấm Sét 100px, Chấn Động Đất Sâu).
- * 16. Bảng Thống Kê Sát Thương Cuối Trận (Combat Recap - V.9).
+ * NÂNG CẤP VÀ ĐỒNG BỘ:
+ * 1. ZERO-GC OPTIMIZATION: Quản lý 14 Object Pools cấp phát tĩnh 100%, không cấp
+ *    phát mảng/đối tượng mới trong vòng lặp tác chiến.
+ * 2. ĐỒNG BỘ RELIC (I.1 -> I.10):
+ *    - Sniper Scope (I.7): +25% tầm bắn & độ rộng chùm laser.
+ *    - Quantum Battery (I.8): Mở rộng Rage tối đa lên 200, tiêu hao 100 nộ/lần.
+ *    - Blood Claws (I.9): 10% hút máu cận chiến + rút máu Chảy Máu.
+ *    - Haste Matrix (I.10): maxCd * 0.8 cho 3 kỹ năng cơ bản.
+ *    - Aero Boots (I.3): Tạo vệt lửa (fireTrails pool) thiêu đốt và làm chậm quái.
+ * 3. BỘ NÂNG CẤP VŨ KHÍ & KỸ NĂNG (II.1 -> II.10 & III.1 -> III.10):
+ *    - Split Slash (II.1), Prism Laser (II.2), Gravity Shell (II.3), Blood Scythe (II.4),
+ *      Chain Lightning (II.5 - nảy 4 mục tiêu khi Crit), Napalm Coating (II.6),
+ *      Armor Piercing (II.7 - bỏ qua 50% khiên Tanker), Ricochet Rounds (II.8),
+ *      Corpse Explosion (II.9 - nổ 15% HP max quái chết trong 130px),
+ *      Parry Master (II.10 - phản đòn +300% sát thương chí mạng).
+ *    - Kỹ năng nhân vật: Phân Thân Thời Gian (Time Clone tồn tại 3s tự chém),
+ *      Bão Từ Hút Máu, Vùng Ngưng Đọng Vĩnh Cửu (+1.5s khi diệt quái), Multi-Dash,
+ *      Án Tử Tốc Độ, Pháo Đài Xung Kích đẩy lùi 200px, Hồi Nộ Thần Tốc né hoàn hảo +26 Nộ,
+ *      Vòng Bảo Hộ Sấm Sét 100px, Chấn Động Đất Sâu choáng 2s / chậm Boss 50%.
+ * 4. COMBAT RECAP CHI TIẾT (V.9): Phân loại nguồn sát thương (melee, ranged, skill,
+ *    chainLightning, ashBlast, parryCounter), sát thương chặn khiên, số lần Parry.
  * ============================================================================
  */
 
@@ -68,12 +71,22 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // BỘ THỐNG KÊ CHIẾN ĐẤU CUỐI TRẬN (COMBAT RECAP - V.9)
+    // COMBAT RECAP ENGINE (V.9): THỐNG KÊ CHI TIẾT NGUỒN SÁT THƯƠNG & PHÒNG THỦ
     // ------------------------------------------------------------------------
     recap: {
         totalDamageDealt: 0,
+        damageBySource: {
+            melee: 0,
+            ranged: 0,
+            skill: 0,
+            chainLightning: 0,
+            ashBlast: 0,
+            parryCounter: 0,
+            passiveAura: 0
+        },
         totalShieldAbsorbed: 0,
         totalBulletsDeflected: 0,
+        totalParries: 0,
         totalKills: 0,
         combatTime: 0,
         recentDamageWindow: 0,
@@ -84,12 +97,20 @@ window.Game.Combat = {
         totalHits: 0
     },
 
-    recordDamageDealt: function (amount, isCrit) {
+    recordDamageDealt: function (amount, isCrit, sourceCategory) {
         const val = Math.max(0, amount | 0);
         this.recap.totalDamageDealt += val;
         this.recap.recentDamageAccumulated += val;
         this.recap.totalHits++;
         if (isCrit) this.recap.totalCrits++;
+
+        const src = sourceCategory || 'melee';
+        if (typeof this.recap.damageBySource[src] === 'number') {
+            this.recap.damageBySource[src] += val;
+        } else {
+            this.recap.damageBySource.melee += val;
+        }
+
         if (val > this.recap.highestSingleHit) {
             this.recap.highestSingleHit = val;
         }
@@ -99,8 +120,11 @@ window.Game.Combat = {
         this.recap.totalShieldAbsorbed += Math.max(0, amount | 0);
     },
 
-    recordBulletDeflected: function () {
+    recordBulletDeflected: function (isParryCounter) {
         this.recap.totalBulletsDeflected++;
+        if (isParryCounter) {
+            this.recap.totalParries++;
+        }
     },
 
     getCombatRecap: function () {
@@ -109,9 +133,11 @@ window.Game.Combat = {
             : 0;
         return {
             totalDamage: this.recap.totalDamageDealt,
+            damageBySource: Object.assign({}, this.recap.damageBySource),
             dps: this.recap.currentDPS,
             shieldAbsorbed: this.recap.totalShieldAbsorbed,
             bulletsDeflected: this.recap.totalBulletsDeflected,
+            parries: this.recap.totalParries,
             kills: this.recap.totalKills,
             highestHit: this.recap.highestSingleHit,
             critRate: critRate + '%',
@@ -121,8 +147,16 @@ window.Game.Combat = {
 
     resetCombatRecap: function () {
         this.recap.totalDamageDealt = 0;
+        this.recap.damageBySource.melee = 0;
+        this.recap.damageBySource.ranged = 0;
+        this.recap.damageBySource.skill = 0;
+        this.recap.damageBySource.chainLightning = 0;
+        this.recap.damageBySource.ashBlast = 0;
+        this.recap.damageBySource.parryCounter = 0;
+        this.recap.damageBySource.passiveAura = 0;
         this.recap.totalShieldAbsorbed = 0;
         this.recap.totalBulletsDeflected = 0;
+        this.recap.totalParries = 0;
         this.recap.totalKills = 0;
         this.recap.combatTime = 0;
         this.recap.recentDamageWindow = 0;
@@ -134,7 +168,7 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // ĐỊNH NGHĨA KỸ NĂNG NHÂN VẬT & BẢNG VŨ KHÍ
+    // ĐỊNH NGHĨA KỸ NĂNG NHÂN VẬT & BẢNG THUỘC TÍNH VŨ KHÍ
     // ------------------------------------------------------------------------
     characterSkillsets: {
         time_traveler: [
@@ -173,22 +207,23 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // CÁC MẢNG OBJECT POOL ĐƯỢC CẤP PHÁT TĨNH (ZERO GARBAGE COLLECTION)
+    // CẤP PHÁT TĨNH 14 OBJECT POOLS (ZERO GARBAGE COLLECTION RUNTIME)
     // ------------------------------------------------------------------------
     bullets: [],            // Pool 200 đạn (Pháo, phi tiêu, kiếm khí, đạn phản đòn, ricochet)
     particles: [],          // Pool 300 hạt hiệu ứng
-    slashes: [],            // Pool 40 nhát chém (SpriteSheet / Arc)
-    floatingTexts: [],      // Pool 50 chữ số bay
-    laserBeams: [],         // Pool 35 tia laser / tia sét lan truyền
-    shockwaves: [],         // Pool 25 vòng sóng chấn động
-    afterimages: [],        // Pool 30 bóng mờ nhân vật
-    crossFlashes: [],       // Pool 20 tia chớp chữ X chí mạng
-    spacetimeEchoes: [],    // Pool 20 tàn dư thời không (lặp lại chém sau 1.5s)
-    timeClones: [],         // Pool 10 phân thân thời gian (tồn tại 3s tự chém quái)
-    magmaZones: [],         // Pool 10 vùng dung nham địa chấn
-    blackHoles: [],         // Pool 8 hố đen hư không
-    bleedEffects: [],       // Pool 35 hiệu ứng chảy máu
-    burnEffects: [],        // Pool 35 hiệu ứng thiêu đốt quá nhiệt
+    slashes: [],            // Pool 40 vệt chém (SpriteSheet / Arc)
+    floatingTexts: [],      // Pool 60 chữ số bay sát thương
+    laserBeams: [],         // Pool 40 tia laser & sét lan truyền
+    shockwaves: [],         // Pool 30 vòng sóng xung kích
+    afterimages: [],        // Pool 35 bóng mờ nhân vật
+    crossFlashes: [],       // Pool 25 tia chớp chữ X chí mạng
+    spacetimeEchoes: [],    // Pool 20 tàn dư thời không
+    timeClones: [],         // Pool 10 phân thân thời gian (III.1 - tồn tại 3s tự chém)
+    magmaZones: [],         // Pool 12 vùng địa chấn nứt đất
+    blackHoles: [],         // Pool 10 hố đen trọng lực
+    bleedEffects: [],       // Pool 40 hiệu ứng Chảy Máu
+    burnEffects: [],        // Pool 40 hiệu ứng Thiêu Đốt Quá Nhiệt
+    fireTrails: [],         // Pool 30 vệt lửa Giày Lướt Phản Lực (Aero Boots - I.3)
 
     dashState: null,
     weaponHeat: 0,
@@ -219,7 +254,7 @@ window.Game.Combat = {
         if (this._poolsInitialized) return;
         this._poolsInitialized = true;
 
-        // 1. 200 Bullets / Projectiles
+        // 1. Bullets (200 slots)
         this.bullets = new Array(200);
         for (let i = 0; i < 200; i++) {
             this.bullets[i] = {
@@ -240,7 +275,7 @@ window.Game.Combat = {
             };
         }
 
-        // 2. 300 Particles
+        // 2. Particles (300 slots)
         this.particles = new Array(300);
         for (let i = 0; i < 300; i++) {
             this.particles[i] = {
@@ -251,7 +286,7 @@ window.Game.Combat = {
             };
         }
 
-        // 3. 40 Slashes
+        // 3. Slashes (40 slots)
         this.slashes = new Array(40);
         for (let i = 0; i < 40; i++) {
             this.slashes[i] = {
@@ -264,9 +299,9 @@ window.Game.Combat = {
             };
         }
 
-        // 4. 50 Floating Texts
-        this.floatingTexts = new Array(50);
-        for (let i = 0; i < 50; i++) {
+        // 4. Floating Texts (60 slots)
+        this.floatingTexts = new Array(60);
+        for (let i = 0; i < 60; i++) {
             this.floatingTexts[i] = {
                 active: false,
                 x: 0, y: 0, vx: 0, vy: 0,
@@ -275,9 +310,9 @@ window.Game.Combat = {
             };
         }
 
-        // 5. 35 Laser Beams / Sét Lan Truyền
-        this.laserBeams = new Array(35);
-        for (let i = 0; i < 35; i++) {
+        // 5. Laser Beams & Chain Lightning (40 slots)
+        this.laserBeams = new Array(40);
+        for (let i = 0; i < 40; i++) {
             this.laserBeams[i] = {
                 active: false,
                 x1: 0, y1: 0, x2: 0, y2: 0,
@@ -287,9 +322,9 @@ window.Game.Combat = {
             };
         }
 
-        // 6. 25 Shockwaves
-        this.shockwaves = new Array(25);
-        for (let i = 0; i < 25; i++) {
+        // 6. Shockwaves (30 slots)
+        this.shockwaves = new Array(30);
+        for (let i = 0; i < 30; i++) {
             this.shockwaves[i] = {
                 active: false,
                 x: 0, y: 0, radius: 0, maxRadius: 100,
@@ -297,9 +332,9 @@ window.Game.Combat = {
             };
         }
 
-        // 7. 30 Afterimages
-        this.afterimages = new Array(30);
-        for (let i = 0; i < 30; i++) {
+        // 7. Afterimages (35 slots)
+        this.afterimages = new Array(35);
+        for (let i = 0; i < 35; i++) {
             this.afterimages[i] = {
                 active: false,
                 x: 0, y: 0, angle: 0, radius: 20,
@@ -308,9 +343,9 @@ window.Game.Combat = {
             };
         }
 
-        // 8. 20 Cross Flashes
-        this.crossFlashes = new Array(20);
-        for (let i = 0; i < 20; i++) {
+        // 8. Cross Flashes (25 slots)
+        this.crossFlashes = new Array(25);
+        for (let i = 0; i < 25; i++) {
             this.crossFlashes[i] = {
                 active: false,
                 x: 0, y: 0, size: 20, color: '#fde047',
@@ -318,7 +353,7 @@ window.Game.Combat = {
             };
         }
 
-        // 9. 20 Tàn Dư Thời Không (Spacetime Echoes)
+        // 9. Spacetime Echoes (20 slots)
         this.spacetimeEchoes = new Array(20);
         for (let i = 0; i < 20; i++) {
             this.spacetimeEchoes[i] = {
@@ -330,22 +365,22 @@ window.Game.Combat = {
             };
         }
 
-        // 10. 10 Phân Thân Thời Gian (Time Clones - III.1)
+        // 10. Time Clones (10 slots - III.1)
         this.timeClones = new Array(10);
         for (let i = 0; i < 10; i++) {
             this.timeClones[i] = {
                 active: false,
                 x: 0, y: 0, angle: 0,
                 radius: 20, slashRadius: 115,
-                attackTimer: 0.5, attackInterval: 0.55,
+                attackTimer: 0.25, attackInterval: 0.55,
                 damage: 0, weaponKey: 'iron_sword',
                 color: '#00f2fe', life: 3.0, maxLife: 3.0
             };
         }
 
-        // 11. 10 Vùng Dung Nham (Magma Zones)
-        this.magmaZones = new Array(10);
-        for (let i = 0; i < 10; i++) {
+        // 11. Magma Zones (12 slots)
+        this.magmaZones = new Array(12);
+        for (let i = 0; i < 12; i++) {
             this.magmaZones[i] = {
                 active: false,
                 x: 0, y: 0, radius: 260,
@@ -355,9 +390,9 @@ window.Game.Combat = {
             };
         }
 
-        // 12. 8 Hố Đen Hư Không
-        this.blackHoles = new Array(8);
-        for (let i = 0; i < 8; i++) {
+        // 12. Black Holes (10 slots)
+        this.blackHoles = new Array(10);
+        for (let i = 0; i < 10; i++) {
             this.blackHoles[i] = {
                 active: false,
                 x: 0, y: 0, radius: 190,
@@ -368,9 +403,9 @@ window.Game.Combat = {
             };
         }
 
-        // 13. 35 Bleed Effects (Chảy Máu - I.9)
-        this.bleedEffects = new Array(35);
-        for (let i = 0; i < 35; i++) {
+        // 13. Bleed Effects (40 slots - I.9 Blood Claws)
+        this.bleedEffects = new Array(40);
+        for (let i = 0; i < 40; i++) {
             this.bleedEffects[i] = {
                 active: false,
                 enemy: null,
@@ -381,9 +416,9 @@ window.Game.Combat = {
             };
         }
 
-        // 14. 35 Burn Effects (Thiêu Đốt Quá Nhiệt - II.6)
-        this.burnEffects = new Array(35);
-        for (let i = 0; i < 35; i++) {
+        // 14. Burn Effects (40 slots - II.6 Napalm Coating)
+        this.burnEffects = new Array(40);
+        for (let i = 0; i < 40; i++) {
             this.burnEffects[i] = {
                 active: false,
                 enemy: null,
@@ -392,12 +427,23 @@ window.Game.Combat = {
                 tickDamage: 0
             };
         }
+
+        // 15. Fire Trails (30 slots - I.3 Aero Boots)
+        this.fireTrails = new Array(30);
+        for (let i = 0; i < 30; i++) {
+            this.fireTrails[i] = {
+                active: false,
+                x: 0, y: 0, radius: 34,
+                damage: 32, life: 0, maxLife: 2.2
+            };
+        }
     },
 
     init: function () {
         this._initSpriteSheets();
         this._initObjectPools();
 
+        // Đặt lại cờ hoạt động toàn bộ Pool
         for (let i = 0; i < this.bullets.length; i++) this.bullets[i].active = false;
         for (let i = 0; i < this.particles.length; i++) this.particles[i].active = false;
         for (let i = 0; i < this.slashes.length; i++) this.slashes[i].active = false;
@@ -412,15 +458,17 @@ window.Game.Combat = {
         for (let i = 0; i < this.blackHoles.length; i++) this.blackHoles[i].active = false;
         for (let i = 0; i < this.bleedEffects.length; i++) this.bleedEffects[i].active = false;
         for (let i = 0; i < this.burnEffects.length; i++) this.burnEffects[i].active = false;
+        for (let i = 0; i < this.fireTrails.length; i++) this.fireTrails[i].active = false;
 
         this.dashState = null;
         if (window.Game.player) {
             window.Game.player.dashTime = 0;
         }
 
-        // Bộ Lưu Trữ Lượng Tử (Quantum Battery - I.8): Mở rộng Rage tối đa lên 200
+        // Cập nhật Quantum Battery (I.8)
+        const hasQuantum = this._hasRelic('relic_quantum_battery');
         if (window.Game.state) {
-            window.Game.state.maxRage = 200;
+            window.Game.state.maxRage = hasQuantum ? 200 : 100;
         }
 
         this.weaponHeat = 0;
@@ -454,7 +502,21 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // CÁC HÀM CẤP PHÁT ĐỐI TƯỢNG TỪ POOL (TÁI SỬ DỤNG - ZERO ALLOCATION)
+    // HỆ THỐNG TRUY XUẤT RELIC CHUẨN HÓA
+    // ------------------------------------------------------------------------
+    _hasRelic: function (relicKey) {
+        if (window.Game.Systems && typeof window.Game.Systems.hasEquippedRelic === 'function') {
+            return window.Game.Systems.hasEquippedRelic(relicKey);
+        }
+        const state = window.Game.state;
+        if (state && Array.isArray(state.equippedRelics)) {
+            return state.equippedRelics.includes(relicKey) || state.equippedRelics.includes(relicKey.replace('relic_', ''));
+        }
+        return false;
+    },
+
+    // ------------------------------------------------------------------------
+    // LẤY ĐỐI TƯỢNG TỪ POOL (ZERO-ALLOCATION GETTERS)
     // ------------------------------------------------------------------------
     _getFreeBullet: function () {
         for (let i = 0; i < this.bullets.length; i++) {
@@ -580,6 +642,16 @@ window.Game.Combat = {
         return null;
     },
 
+    _getFreeFireTrail: function () {
+        for (let i = 0; i < this.fireTrails.length; i++) {
+            if (!this.fireTrails[i].active) {
+                this.fireTrails[i].active = true;
+                return this.fireTrails[i];
+            }
+        }
+        return null;
+    },
+
     spawnFloatingText: function (x, y, text, color, isCrit) {
         let ft = null;
         for (let i = 0; i < this.floatingTexts.length; i++) {
@@ -595,7 +667,7 @@ window.Game.Combat = {
         ft.x = x + offsetX;
         ft.y = y;
         ft.vx = offsetX * 0.85;
-        ft.vy = isCrit ? -85 : -65;
+        ft.vy = isCrit ? -88 : -65;
         ft.text = String(text);
         ft.color = color || '#ffffff';
         ft.isCrit = Boolean(isCrit);
@@ -653,19 +725,20 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // I.7: KÍNH HỒNG NGOẠI CẢNH BÁO (+25% TẦM & GÓC NGẮM LASER_GUN)
+    // I.7: KÍNH HỒNG NGOẠI (+25% TẦM & ĐỘ RỘNG TIA LASER)
     // ------------------------------------------------------------------------
     getSkillAimConfig: function (skillIndex) {
         const weaponKey = (window.Game.state && window.Game.state.currentWeapon) || 'iron_sword';
         const weapon = this.weapons[weaponKey] || this.weapons.iron_sword;
         const skills = this.getActiveSkills();
         const skill = skills[skillIndex];
+        const hasScope = this._hasRelic('relic_sniper_scope');
 
         if (skillIndex === 0) {
             if (weaponKey === 'laser_gun') {
-                // Sniper Scope (I.7): Tăng +25% tầm bắn và độ rộng chùm tia
-                const scopeRange = weapon.range * 1.25;
-                const scopeBeamWidth = (weapon.beamWidth || 16) * 1.25;
+                const scopeMult = hasScope ? 1.25 : 1.0;
+                const scopeRange = weapon.range * scopeMult;
+                const scopeBeamWidth = (weapon.beamWidth || 16) * scopeMult;
                 return { type: 'LASER', range: scopeRange, beamWidth: scopeBeamWidth, color: weapon.color, glow: weapon.glow };
             }
             if (weaponKey === 'chrono_cannon') {
@@ -752,11 +825,11 @@ window.Game.Combat = {
         let maxAllowedAngle = (30 * Math.PI) / 180;
 
         if (isGun) {
-            searchRadius = Math.min(230, maxRange || 230);
-            maxAllowedAngle = (15 * Math.PI) / 180;
+            searchRadius = Math.min(250, maxRange || 250);
+            maxAllowedAngle = (18 * Math.PI) / 180;
         } else if (isMelee) {
-            searchRadius = Math.min(165, maxRange || 165);
-            maxAllowedAngle = (38 * Math.PI) / 180;
+            searchRadius = Math.min(170, maxRange || 170);
+            maxAllowedAngle = (40 * Math.PI) / 180;
         } else {
             searchRadius = Math.min(220, maxRange || 220);
             maxAllowedAngle = (25 * Math.PI) / 180;
@@ -801,7 +874,7 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // II.10: PARRY MASTER - PHẢN ĐẠN VỚI +300% CHÍ MẠNG
+    // II.10: PARRY MASTER - PHẢN ĐẠN VỚI +300% SÁT THƯƠNG CHÍ MẠNG
     // ------------------------------------------------------------------------
     _checkMeleeBulletDeflect: function (player, slashAngle, slashRadius, slashArc, isThirdHit, weaponKey) {
         const enemiesModule = window.Game.Enemies;
@@ -829,20 +902,21 @@ window.Game.Combat = {
                     const px = proj.x;
                     const py = proj.y;
                     deflectedCount++;
-                    this.recordBulletDeflected();
 
                     const state = window.Game.state || {};
+                    const isSuperParry = isThirdHit || weaponKey === 'cyber_sword';
+                    this.recordBulletDeflected(isSuperParry);
 
-                    if (isThirdHit || weaponKey === 'cyber_sword') {
-                        // Parry Master (II.10): Đạn phản xạ nhận thêm +300% sát thương chí mạng
-                        const maxRageCap = state.maxRage || 200;
-                        state.rage = Math.min(maxRageCap, (state.rage || 0) + 8);
-                        this.spawnFloatingText(px, py - 20, '⚔️ PHẢN ĐẠN CHÍ MẠNG (+300%)!', '#00f2fe', true);
+                    if (isSuperParry) {
+                        // Parry Master (II.10): Đạn phản xạ nhận thêm +300% chí mạng (tổng x4.0)
+                        const maxRageCap = state.maxRage || 100;
+                        state.rage = Math.min(maxRageCap, (state.rage || 0) + 10);
+                        this.spawnFloatingText(px, py - 20, '⚔️ PARRY CHÍ MẠNG (+300%)!', '#00f2fe', true);
                         this._spawnParticles(px, py, '#00f2fe', 16, 220);
                         this._spawnParticles(px, py, '#fde047', 12, 190);
 
                         let nearestEnemy = null;
-                        let minDist = 520;
+                        let minDist = 550;
                         const activeEnemies = (window.Game.Enemies && typeof window.Game.Enemies.getActiveList === 'function')
                             ? window.Game.Enemies.getActiveList()
                             : [];
@@ -866,13 +940,13 @@ window.Game.Combat = {
                             defBullet.subType = 'deflected';
                             defBullet.x = px;
                             defBullet.y = py;
-                            defBullet.vx = Math.cos(targetAngle) * 720;
-                            defBullet.vy = Math.sin(targetAngle) * 720;
-                            defBullet.speed = 720;
+                            defBullet.vx = Math.cos(targetAngle) * 750;
+                            defBullet.vy = Math.sin(targetAngle) * 750;
+                            defBullet.speed = 750;
                             defBullet.radius = 12;
                             defBullet.traveled = 0;
-                            defBullet.maxDistance = 500;
-                            // Sát thương phản đòn: 180% x (1 + 3.0) = 720% base damage
+                            defBullet.maxDistance = 520;
+                            // Sát thương: 180% x (1 + 3.0) = 720% base damage
                             defBullet.damage = Math.round(baseDmg * 1.80 * 4.0);
                             defBullet.color = '#00f2fe';
                             defBullet.glow = '#fde047';
@@ -883,8 +957,8 @@ window.Game.Combat = {
                         if (beam) {
                             beam.x1 = px;
                             beam.y1 = py;
-                            beam.x2 = px + Math.cos(targetAngle) * 90;
-                            beam.y2 = py + Math.sin(targetAngle) * 90;
+                            beam.x2 = px + Math.cos(targetAngle) * 95;
+                            beam.y2 = py + Math.sin(targetAngle) * 95;
                             beam.color = '#00f2fe';
                             beam.coreColor = '#ffffff';
                             beam.width = 9;
@@ -897,7 +971,7 @@ window.Game.Combat = {
                         proj.hp = 0;
                         if (typeof proj.destroy === 'function') proj.destroy();
                     } else {
-                        const maxRageCap = state.maxRage || 200;
+                        const maxRageCap = state.maxRage || 100;
                         state.rage = Math.min(maxRageCap, (state.rage || 0) + 4);
                         this._spawnParticles(px, py, '#fde047', 9, 160);
                         this._spawnParticles(px, py, '#ffffff', 6, 130);
@@ -964,7 +1038,7 @@ window.Game.Combat = {
 
         for (let b = 0; b < maxBounces; b++) {
             let nextTarget = null;
-            let minDist = 210;
+            let minDist = 220;
 
             for (let i = 0; i < activeEnemies.length; i++) {
                 const candidate = activeEnemies[i];
@@ -988,27 +1062,27 @@ window.Game.Combat = {
                 beam.y2 = nextTarget.y;
                 beam.color = '#38bdf8';
                 beam.coreColor = '#ffffff';
-                beam.width = 5;
+                beam.width = 6;
                 beam.isLightning = true;
                 beam.life = 0.24;
                 beam.maxLife = 0.24;
             }
 
-            this._spawnParticles(nextTarget.x, nextTarget.y, '#38bdf8', 6, 140);
+            this._spawnParticles(nextTarget.x, nextTarget.y, '#38bdf8', 7, 140);
             this.spawnFloatingText(nextTarget.x, nextTarget.y - 20, `⚡ ${chainDmg}`, '#38bdf8');
-            this.recordDamageDealt(chainDmg, false);
+            this.recordDamageDealt(chainDmg, false, 'chainLightning');
 
             if (window.Game.Enemies && typeof window.Game.Enemies.damageEnemy === 'function') {
                 window.Game.Enemies.damageEnemy(nextTarget, chainDmg, false, false, true);
             }
 
-            chainDmg = Math.round(chainDmg * 0.8);
+            chainDmg = Math.round(chainDmg * 0.82);
             currentTarget = nextTarget;
         }
     },
 
     // ------------------------------------------------------------------------
-    // II.9 & III.3: CORPSE EXPLOSION & CHRONOSTASIS FIELD EXTENSION
+    // II.9, III.3 & II.4: CORPSE EXPLOSION, CHRONO EXTENSION & BLOOD SCYTHE
     // ------------------------------------------------------------------------
     registerEnemyKill: function (enemy) {
         const player = window.Game.player;
@@ -1045,7 +1119,7 @@ window.Game.Combat = {
             const victim = activeEnemies[i];
             if (!victim || victim.dead || victim.hp <= 0 || victim.id === enemy.id) continue;
             if (Math.hypot(victim.x - enemy.x, victim.y - enemy.y) <= corpseRadius + (victim.radius || 20)) {
-                this.recordDamageDealt(corpseExplosionDmg, false);
+                this.recordDamageDealt(corpseExplosionDmg, false, 'ashBlast');
                 this.spawnFloatingText(victim.x, victim.y - 18, `💥 ${corpseExplosionDmg}`, '#ef4444');
                 if (window.Game.Enemies && typeof window.Game.Enemies.damageEnemy === 'function') {
                     window.Game.Enemies.damageEnemy(victim, corpseExplosionDmg, false, false, true);
@@ -1117,7 +1191,7 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // III.7: HỒI NỘ THẦN TỐC (ADRENALINE RUSH) - NÉ HOÀN HẢO +30% NỘ
+    // III.7: HỒI NỘ THẦN TỐC (ADRENALINE RUSH) - NÉ HOÀN HẢO +26 NỘ
     // ------------------------------------------------------------------------
     _checkPerfectDodge: function (player, radiusBonus) {
         const enemiesModule = window.Game.Enemies;
@@ -1140,8 +1214,8 @@ window.Game.Combat = {
 
         if (dodgedBullets > 0) {
             const state = window.Game.state || {};
-            // Adrenaline Rush (III.7): Nhận thêm +30% nộ (26 nộ thay vì 20)
-            const maxRageCap = state.maxRage || 200;
+            // Hồi nộ thần tốc: +26 nộ
+            const maxRageCap = state.maxRage || (this._hasRelic('relic_quantum_battery') ? 200 : 100);
             state.rage = Math.min(maxRageCap, (state.rage || 0) + 26);
             player.shield = Math.min(player.maxShield || 100, (player.shield || 0) + 18);
 
@@ -1157,7 +1231,7 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // KÍCH HOẠT KỸ NĂNG: XỬ LÝ HỒI CHIÊU, RAGE VÀ TÍCH LŨY CHARGES (USE SKILL)
+    // KÍCH HOẠT KỸ NĂNG: XỬ LÝ HỒI CHIÊU, RAGE VÀ CHARGES (USE SKILL)
     // ------------------------------------------------------------------------
     useSkill: function (skillIndex, options) {
         if (window.Game.state && window.Game.state.isPaused) return;
@@ -1173,10 +1247,9 @@ window.Game.Combat = {
 
         const state = window.Game.state || {};
         const opts = options || {};
-        const equippedRelics = Array.isArray(state.equippedRelics) ? state.equippedRelics : [];
 
-        // Lõi Gia Tốc Hồi Chiêu (Haste Matrix - I.10): Giảm 20% maxCd của 3 skill cơ bản
-        const hasHasteMatrix = equippedRelics.includes('relic_haste_matrix');
+        // Lõi Gia Tốc Hồi Chiêu (Haste Matrix - I.10): Giảm 20% maxCd cho 3 skill cơ bản
+        const hasHasteMatrix = this._hasRelic('relic_haste_matrix');
         const relicCdMult = (hasHasteMatrix && skillIndex < 3) ? 0.8 : 1.0;
 
         if (state.adminNoCd === true) {
@@ -1186,7 +1259,7 @@ window.Game.Combat = {
             }
         }
 
-        // Bộ Lưu Trữ Lượng Tử (Quantum Battery - I.8): maxRage = 200, tiêu hao 100 nộ/lần
+        // Bộ Lưu Trữ Lượng Tử (Quantum Battery - I.8): Tiêu hao 100 nộ/lần
         if (skillIndex === 3) {
             const currentRage = state.rage || 0;
             if (currentRage < 100 && !state.adminNoCd) {
@@ -1255,8 +1328,9 @@ window.Game.Combat = {
             this._performChronoFreeze(player);
         }
     },
-// ------------------------------------------------------------------------
-    // III.1: PHÂN THÂN THỜI GIAN (TIME CLONE)
+
+    // ------------------------------------------------------------------------
+    // III.1: PHÂN THÂN THỜI GIAN (TIME CLONE) - TỒN TẠI 3S TỰ CHÉM QUÁI
     // ------------------------------------------------------------------------
     _spawnTimeClone: function (x, y, angle, damage, weaponKey) {
         const clone = this._getFreeTimeClone();
@@ -1279,7 +1353,7 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // KỸ NĂNG RIÊNG CỦA SHADOW ASSASSIN
+    // KỸ NĂNG: SHADOW ASSASSIN (BLINK, PHI ĐAO, ÁN TỬ HƯ VÔ)
     // ------------------------------------------------------------------------
     _performShadowBlink: function (player, weaponKey, weapon, angle) {
         if (window.Game.Audio && typeof window.Game.Audio.playSlash === 'function') {
@@ -1308,12 +1382,25 @@ window.Game.Combat = {
             }
         }
 
-        // III.1: Để lại Phân Thân Thời Gian tại vị trí cũ
+        // Để lại Phân Thân Thời Gian tại vị trí cũ
         this._spawnTimeClone(startX, startY, angle, Math.round(baseDmg * 0.85), weaponKey);
 
         player.x = finalX;
         player.y = finalY;
         player.dashTime = 0;
+
+        // Aero Boots (I.3): Rải vệt lửa dọc đường Blink
+        if (this._hasRelic('relic_aero_boots')) {
+            const ft = this._getFreeFireTrail();
+            if (ft) {
+                ft.x = (startX + finalX) * 0.5;
+                ft.y = (startY + finalY) * 0.5;
+                ft.radius = 36;
+                ft.damage = 32;
+                ft.life = 2.2;
+                ft.maxLife = 2.2;
+            }
+        }
 
         const beam = this._getFreeLaserBeam();
         if (beam) {
@@ -1434,7 +1521,7 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // KỸ NĂNG RIÊNG CỦA IRON JUGGERNAUT
+    // KỸ NĂNG: IRON JUGGERNAUT (KHIÊN ĐỘT KÍCH, ĐỊA CHẤN, PHÁO ĐÀI BẤT DIỆT)
     // ------------------------------------------------------------------------
     _performShieldCharge: function (player, weaponKey, weapon, angle) {
         if (window.Game.Audio && typeof window.Game.Audio.playExplosion === 'function') {
@@ -1446,7 +1533,6 @@ window.Game.Combat = {
         player.shield = Math.min(player.maxShield || 100, (player.shield || 0) + shieldGain);
         this.spawnFloatingText(player.x, player.y - 40, `🛡️ KHIÊN ĐỘT KÍCH (+${shieldGain} GIÁP)!`, '#eab308', true);
 
-        // III.1: Để lại Phân Thân Thời Gian tại vị trí cũ
         this._spawnTimeClone(player.x, player.y, angle, Math.round(this._calculateBaseDamage(weaponKey, weapon) * 0.9), weaponKey);
 
         const dashDuration = 0.18;
@@ -1574,7 +1660,7 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // ĐÒN ĐÁNH THƯỜNG & TỔNG HỢP COMBO NÂNG CẤP
+    // ĐÒN ĐÁNH THƯỜNG & TỔNG HỢP COMBO VŨ KHÍ NÂNG CẤP
     // ------------------------------------------------------------------------
     _performBasicAttack: function (player, weaponKey, weapon, angle, opts) {
         if (this.comboResetTimer > 0) {
@@ -1619,9 +1705,10 @@ window.Game.Combat = {
                 this._spawnParticles(player.x, player.y, '#ef4444', 8, 140);
             }
 
-            // I.7: Tăng tầm laser_gun thêm 25%
-            const effectiveRange = weapon.range * 1.25 * rangeMult;
-            const beamWidth = weapon.beamWidth * 1.25 * (isThirdHit ? 1.6 : 1.0) * ascensionSizeMult;
+            // I.7: Tăng +25% tầm bắn và chùm tia khi có Sniper Scope
+            const scopeMult = this._hasRelic('relic_sniper_scope') ? 1.25 : 1.0;
+            const effectiveRange = weapon.range * scopeMult * rangeMult;
+            const beamWidth = weapon.beamWidth * scopeMult * (isThirdHit ? 1.6 : 1.0) * ascensionSizeMult;
             const startX = player.x + Math.cos(actualAngle) * 24;
             const startY = player.y + Math.sin(actualAngle) * 24;
             const endX = player.x + Math.cos(actualAngle) * effectiveRange;
@@ -1764,7 +1851,7 @@ window.Game.Combat = {
                 ball.weaponKey = weaponKey;
                 ball.isThirdHit = isThirdHit;
                 ball.isAscendedFinisher = isAscendedFinisher;
-                ball.ricochetsLeft = 2; // II.8: Cho phép nảy bật tường 2 lần
+                ball.ricochetsLeft = 2; // II.8: Nảy bật tường 2 lần
             }
 
             if (isAscendedFinisher) {
@@ -1819,7 +1906,7 @@ window.Game.Combat = {
             this._spawnSpaceLightningBurst(tipX, tipY, enhanced.color, 6, effectiveRange * 0.95);
         }
 
-        // II.1: Kiếm Khí Tam Phân (Split Slash) - Đòn 3 bắn 3 luồng (-0.22, 0, +0.22 rad)
+        // II.1: Kiếm Khí Tam Phân (Split Slash) - Đòn 3 cận chiến bắn 3 luồng (-0.22, 0, +0.22)
         if ((weaponKey === 'iron_sword' || weaponKey === 'cyber_sword') && isThirdHit) {
             const splitAngles = [-0.22, 0, 0.22];
             for (let sa = 0; sa < splitAngles.length; sa++) {
@@ -1879,7 +1966,7 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // KỸ NĂNG DASH CỦA TIME TRAVELER: LƯỚT CHÉM, TÀN DƯ & PHÂN THÂN
+    // KỸ NĂNG: TIME TRAVELER (DASH CHÉM, TÀN DƯ, BÃO TỪ, NGƯNG ĐỌNG)
     // ------------------------------------------------------------------------
     _performDashSlash: function (player, weaponKey, weapon, angle, opts) {
         if (window.Game.Audio && typeof window.Game.Audio.playSlash === 'function') {
@@ -1896,8 +1983,21 @@ window.Game.Combat = {
         const startX = player.x;
         const startY = player.y;
 
-        // III.1: Để lại Phân Thân Thời Gian tự chém quái trong 3 giây
+        // Phân Thân Thời Gian tự chém quái trong 3 giây
         this._spawnTimeClone(startX, startY, angle, Math.round(baseDmg * 0.95), weaponKey);
+
+        // Aero Boots (I.3): Tạo vệt lửa thiêu đốt tại điểm lướt
+        if (this._hasRelic('relic_aero_boots')) {
+            const ft = this._getFreeFireTrail();
+            if (ft) {
+                ft.x = startX;
+                ft.y = startY;
+                ft.radius = 36;
+                ft.damage = 32;
+                ft.life = 2.2;
+                ft.maxLife = 2.2;
+            }
+        }
 
         player.dashTime = dashDuration;
 
@@ -1954,7 +2054,7 @@ window.Game.Combat = {
         }
     },
 
-    // III.2: BÃO TỪ HÚT MÁU (VORTEX LEECH) - 15% SÁT THƯƠNG CHUYỂN HÓA THÀNH MÁU
+    // III.2: BÃO TỪ HÚT MÁU (VORTEX LEECH) - HỒI 15% SÁT THƯƠNG THÀNH MÁU
     _performSuperStorm: function (player, weaponKey, weapon, angle, opts) {
         if (window.Game.Audio && typeof window.Game.Audio.playExplosion === 'function') {
             window.Game.Audio.playExplosion();
@@ -2064,7 +2164,7 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // TÍNH TOÁN & GÂY SÁT THƯƠNG TỔNG QUÁT
+    // TÍNH TOÁN & GÂY SÁT THƯƠNG TỔNG QUÁT LÊN QUÁI VẬT
     // ------------------------------------------------------------------------
     _applyDamageToEnemy: function (enemy, rawAmount, hitAngle, knockback, hitColor, weaponKey, sourceSkill) {
         if (!enemy || enemy.dead || enemy.hp <= 0) return;
@@ -2118,14 +2218,20 @@ window.Game.Combat = {
             this._spawnSpaceLightningBurst(enemy.x, enemy.y, '#a855f7', 3, 60);
         }
 
-        // Ghi nhận sát thương vào Combat Recap
-        this.recordDamageDealt(finalDamage, isCrit);
+        // Ghi nhận sát thương vào Recap theo nguồn
+        const sourceCat = (sourceSkill === 'storm' || sourceSkill === 'dash')
+            ? 'skill'
+            : (weaponKey === 'laser_gun' || weaponKey === 'chrono_cannon')
+            ? 'ranged'
+            : 'melee';
+        this.recordDamageDealt(finalDamage, isCrit, sourceCat);
 
         // II.5: Kích hoạt Sấm Sét Lan Truyền khi đánh Chí Mạng
         if (isCrit) {
             this._triggerChainLightning(enemy, finalDamage);
         }
 
+        // Phá khiên Boss Kỷ Nguyên
         if (enemy.isBoss && (sourceSkill === 'dash' || sourceSkill === 'storm')) {
             const currentTl = state.timeline || 'PRESENT';
             if (currentTl === enemy.shieldTimeline && enemy.shatterAvailable) {
@@ -2138,7 +2244,8 @@ window.Game.Combat = {
                     window.Game.Enemies.spawnSpecificLoot(enemy.x, enemy.y, 'HP_ORB', 2, 25);
                 }
 
-                state.rage = Math.min(state.maxRage || 200, (state.rage || 0) + 15);
+                const maxRageCap = state.maxRage || (this._hasRelic('relic_quantum_battery') ? 200 : 100);
+                state.rage = Math.min(maxRageCap, (state.rage || 0) + 15);
                 this.spawnFloatingText(enemy.x, enemy.y - enemy.radius - 38, '⚡ PHÁ KHIÊN THỜI KHÔNG! (SUY YẾU +35% ST)', '#00f2fe', true);
                 this.spawnFloatingText(player.x, player.y - 45, '+15 NỘ & 2 HP ORB!', '#4ade80', true);
 
@@ -2156,7 +2263,8 @@ window.Game.Combat = {
         }
 
         if (!state.chronoFreezeTimer || state.chronoFreezeTimer <= 0) {
-            state.rage = Math.min(state.maxRage || 200, (state.rage || 0) + 3);
+            const maxRageCap = state.maxRage || (this._hasRelic('relic_quantum_battery') ? 200 : 100);
+            state.rage = Math.min(maxRageCap, (state.rage || 0) + 3);
         }
 
         if (isCrit) {
@@ -2180,28 +2288,33 @@ window.Game.Combat = {
         const now = performance.now() * 0.001;
         const currentWeapon = weaponKey || state.currentWeapon || 'iron_sword';
         const isVoidScythe = currentWeapon === 'void_scythe';
+        const hasBloodClaws = this._hasRelic('relic_blood_claws');
 
         if (player && player.hp > 0 && isMeleeWeapon && (!this._lastLeechTime || now - this._lastLeechTime >= 0.25)) {
-            let lifestealRatio = 0.10; // Móng Vuốt Ma Cà Rồng: 10%
+            let lifestealRatio = hasBloodClaws ? 0.10 : 0.0;
             if (isVoidScythe) lifestealRatio += 0.04;
 
-            const maxHealCap = Math.max(5, Math.round(player.maxHp * 0.08));
-            const healAmount = Math.min(maxHealCap, Math.round(finalDamage * lifestealRatio));
+            if (lifestealRatio > 0) {
+                const maxHealCap = Math.max(5, Math.round(player.maxHp * 0.08));
+                const healAmount = Math.min(maxHealCap, Math.round(finalDamage * lifestealRatio));
 
-            if (healAmount > 0 && player.hp < player.maxHp) {
-                this._lastLeechTime = now;
-                player.hp = Math.min(player.maxHp, player.hp + healAmount);
-                this.spawnFloatingText(player.x, player.y - 28, `+${healAmount} HP (HÚT MÁU)`, '#4ade80');
+                if (healAmount > 0 && player.hp < player.maxHp) {
+                    this._lastLeechTime = now;
+                    player.hp = Math.min(player.maxHp, player.hp + healAmount);
+                    this.spawnFloatingText(player.x, player.y - 28, `+${healAmount} HP (HÚT MÁU)`, '#4ade80');
+                }
             }
 
-            // Hiệu ứng Chảy Máu rút máu mỗi 0.4s trong 3s
-            const bleed = this._getFreeBleedEffect();
-            if (bleed) {
-                bleed.enemy = enemy;
-                bleed.ticksLeft = 7;
-                bleed.tickTimer = 0.4;
-                bleed.damage = Math.max(3, Math.round(finalDamage * 0.08));
-                bleed.weaponKey = currentWeapon;
+            // Gây hiệu ứng Chảy Máu rút máu mỗi 0.4s trong 3s
+            if (hasBloodClaws || isVoidScythe) {
+                const bleed = this._getFreeBleedEffect();
+                if (bleed) {
+                    bleed.enemy = enemy;
+                    bleed.ticksLeft = 7;
+                    bleed.tickTimer = 0.4;
+                    bleed.damage = Math.max(3, Math.round(finalDamage * 0.08));
+                    bleed.weaponKey = currentWeapon;
+                }
             }
         }
 
@@ -2278,7 +2391,7 @@ window.Game.Combat = {
             ? window.Game.Enemies.getActiveList()
             : [];
 
-        // Hút toàn bộ quái vật xung quanh trong bán kính 180px vào tâm vụ nổ
+        // Hút quái vật xung quanh trong bán kính 180px
         const gravityRadius = 180;
         for (let i = 0; i < activeEnemies.length; i++) {
             const enemy = activeEnemies[i];
@@ -2323,9 +2436,14 @@ window.Game.Combat = {
             }
         }
     },
+    // (Kết thúc Phần 1 - Xem tiếp tục tại Phần 2 với Update Loop & Canvas 60-120 FPS Renderer)
+// ========================================================================
+    // combat.js - ENGINE CHIẾN ĐẤU ZERO-GC (PHẦN 2 / 2)
+    // TIẾP NỐI: VÒNG LẶP CẬP NHẬT UPDATE(DT) & RENDER CANVAS 60-120 FPS
+    // ========================================================================
 
     // ------------------------------------------------------------------------
-    // CẬP NHẬT TRẠNG THÁI COMBAT (VÒNG LẶP UPDATE DT - ZERO GC)
+    // VÒNG LẶP UPDATE DT: QUẢN LÝ 14 OBJECT POOLS & TƯƠNG TÁC ZERO-GC
     // ------------------------------------------------------------------------
     update: function (dt) {
         if (window.Game.state && window.Game.state.isPaused) return;
@@ -2343,7 +2461,7 @@ window.Game.Combat = {
             ? window.Game.Enemies.getActiveList()
             : [];
 
-        // Cập nhật thống kê Recap theo thời gian thực
+        // 1. Cập nhật số liệu Combat Recap theo thời gian thực
         this.recap.combatTime += dt;
         this.recap.recentDamageWindow += dt;
         if (this.recap.recentDamageWindow >= 1.0) {
@@ -2352,7 +2470,7 @@ window.Game.Combat = {
             this.recap.recentDamageWindow = 0;
         }
 
-        // III.8: Vòng Bảo Hộ Sấm Sét (Static Barrier) - Giật sét quái trong 100px khi khiên > 0
+        // 2. III.8: Vòng Bảo Hộ Sấm Sét (Static Barrier) - Giật sét quái trong 100px khi khiên > 0
         if (player && player.shield > 0) {
             this.staticBarrierTimer -= dt;
             if (this.staticBarrierTimer <= 0) {
@@ -2371,7 +2489,7 @@ window.Game.Combat = {
                         }
                         const zapDmg = Math.max(12, Math.round((player.shield || 50) * 0.35));
                         this.spawnFloatingText(enemy.x, enemy.y - 18, `⚡ ${zapDmg}`, '#38bdf8');
-                        this.recordDamageDealt(zapDmg, false);
+                        this.recordDamageDealt(zapDmg, false, 'passiveAura');
                         if (window.Game.Enemies && typeof window.Game.Enemies.damageEnemy === 'function') {
                             window.Game.Enemies.damageEnemy(enemy, zapDmg, false, false, true);
                         }
@@ -2380,7 +2498,31 @@ window.Game.Combat = {
             }
         }
 
-        // Tản nhiệt súng Laser: Giảm 38 điểm/giây
+        // 3. I.3: Cập nhật vệt lửa Giày Lướt Phản Lực (Aero Boots)
+        for (let i = 0; i < this.fireTrails.length; i++) {
+            const ft = this.fireTrails[i];
+            if (!ft.active) continue;
+
+            ft.life -= dt;
+            if (ft.life <= 0) {
+                ft.active = false;
+                continue;
+            }
+
+            // Gây hiệu ứng thiêu đốt và làm chậm quái bước vào
+            for (let j = 0; j < activeEnemies.length; j++) {
+                const enemy = activeEnemies[j];
+                if (!enemy || enemy.dead || enemy.hp <= 0) continue;
+                if (Math.hypot(enemy.x - ft.x, enemy.y - ft.y) <= ft.radius + (enemy.radius || 20)) {
+                    enemy.burnTimer = Math.max(enemy.burnTimer || 0, 2.0);
+                    enemy.burnDps = ft.damage;
+                    enemy.slowTimer = Math.max(enemy.slowTimer || 0, 0.4);
+                    enemy.slowFactor = 0.60; // Làm chậm 40%
+                }
+            }
+        }
+
+        // 4. Giảm nhiệt súng Laser (38 điểm/s)
         if (this.weaponHeat > 0) {
             this.weaponHeat = Math.max(0, this.weaponHeat - dt * 38);
         }
@@ -2389,7 +2531,7 @@ window.Game.Combat = {
             this.overdriveTimer = Math.max(0, this.overdriveTimer - dt);
         }
 
-        // Pháo Đài Bất Diệt (Iron Juggernaut)
+        // 5. Pháo Đài Bất Diệt (Iron Juggernaut)
         if (this.fortressTimer > 0 && player) {
             this.fortressTimer = Math.max(0, this.fortressTimer - dt);
             this.fortressPulseTimer -= dt;
@@ -2455,7 +2597,7 @@ window.Game.Combat = {
             if (this.comboResetTimer === 0) this.comboStep = 0;
         }
 
-        // Cập nhật Dash / Lướt Chém
+        // 6. Cập nhật Lướt Chém / Dash Sub-stepping
         if (this.dashState && player) {
             const ds = this.dashState;
             const stepDist = ds.speed * dt;
@@ -2504,7 +2646,7 @@ window.Game.Combat = {
             player.dashTime = Math.max(0, player.dashTime - dt);
         }
 
-        // Hồi chiêu kỹ năng & Tích lũy Charges (III.4)
+        // 7. Hồi chiêu kỹ năng & Tích lũy Charges (III.4 Multi-Dash)
         const hasteMult = this.cdHasteTimer > 0 ? 1.35 : 1.0;
         const anomalyMult = Math.max(1.0, this.terrainCdrMultiplier || 1.0);
         const cdRate = hasteMult * anomalyMult;
@@ -2533,7 +2675,7 @@ window.Game.Combat = {
             }
         }
 
-        // Cập nhật Phân Thân Thời Gian (III.1)
+        // 8. Cập nhật Phân Thân Thời Gian (III.1 - Time Clones tự chém quái)
         for (let i = 0; i < this.timeClones.length; i++) {
             const tc = this.timeClones[i];
             if (!tc.active) continue;
@@ -2577,7 +2719,7 @@ window.Game.Combat = {
             }
         }
 
-        // Cập nhật Tàn Dư Thời Không
+        // 9. Cập nhật Tàn Dư Thời Không (Spacetime Echoes)
         for (let i = 0; i < this.spacetimeEchoes.length; i++) {
             const echo = this.spacetimeEchoes[i];
             if (!echo.active) continue;
@@ -2625,7 +2767,7 @@ window.Game.Combat = {
             }
         }
 
-        // Cập nhật Bullets & Projectiles (II.8 RICOCHET BẬT TƯỜNG)
+        // 10. Cập nhật Bullets & Đạn Nảy Bật Tường (II.8 Ricochet Rounds)
         for (let i = 0; i < this.bullets.length; i++) {
             const b = this.bullets[i];
             if (!b.active) continue;
@@ -2639,7 +2781,7 @@ window.Game.Combat = {
                 const nextX = b.x + (dx / dist) * moveStep;
                 const nextY = b.y + (dy / dist) * moveStep;
 
-                // II.8: Kiểm tra đạn nảy bật tường khi đụng đá/vách
+                // II.8: Kiểm tra đạn nảy bật tường khi đụng đá/vách ngăn
                 if (window.Game.World && typeof window.Game.World.canMoveTo === 'function' && !window.Game.World.canMoveTo(nextX, nextY) && b.ricochetsLeft > 0) {
                     b.ricochetsLeft--;
                     let nearestEnemy = null;
@@ -2771,7 +2913,7 @@ window.Game.Combat = {
             }
         }
 
-        // Cập nhật Chảy Máu (Bleed Effects)
+        // 11. Cập nhật Chảy Máu (Bleed Effects - I.9 Blood Claws)
         for (let i = 0; i < this.bleedEffects.length; i++) {
             const bl = this.bleedEffects[i];
             if (!bl.active) continue;
@@ -2784,14 +2926,14 @@ window.Game.Combat = {
                 bl.tickTimer = 0.4;
                 bl.ticksLeft--;
                 this._spawnParticles(bl.enemy.x, bl.enemy.y, '#ef4444', 5, 90);
-                this.recordDamageDealt(bl.damage, false);
+                this.recordDamageDealt(bl.damage, false, 'passiveAura');
                 if (window.Game.Enemies && typeof window.Game.Enemies.damageEnemy === 'function') {
                     window.Game.Enemies.damageEnemy(bl.enemy, bl.damage, false, false, true);
                 }
             }
         }
 
-        // Cập nhật Thiêu Đốt Quá Nhiệt (Burn Effects - II.6)
+        // 12. Cập nhật Thiêu Đốt Quá Nhiệt (Burn Effects - II.6 Napalm Coating)
         for (let i = 0; i < this.burnEffects.length; i++) {
             const br = this.burnEffects[i];
             if (!br.active) continue;
@@ -2804,14 +2946,14 @@ window.Game.Combat = {
                 br.tickTimer = 0.5;
                 this._spawnParticles(br.enemy.x, br.enemy.y, '#f97316', 4, 80);
                 this.spawnFloatingText(br.enemy.x, br.enemy.y - 14, `🔥 ${br.tickDamage}`, '#f97316');
-                this.recordDamageDealt(br.tickDamage, false);
+                this.recordDamageDealt(br.tickDamage, false, 'passiveAura');
                 if (window.Game.Enemies && typeof window.Game.Enemies.damageEnemy === 'function') {
                     window.Game.Enemies.damageEnemy(br.enemy, br.tickDamage, false, false, true);
                 }
             }
         }
 
-        // Cập nhật Vùng Dung Nham Địa Chấn
+        // 13. Cập nhật Vùng Dung Nham Địa Chấn
         for (let i = 0; i < this.magmaZones.length; i++) {
             const mz = this.magmaZones[i];
             if (!mz.active) continue;
@@ -2832,7 +2974,7 @@ window.Game.Combat = {
             if (mz.life <= 0) mz.active = false;
         }
 
-        // Cập nhật Hố Đen Hư Không
+        // 14. Cập nhật Hố Đen Hư Không
         for (let i = 0; i < this.blackHoles.length; i++) {
             const bh = this.blackHoles[i];
             if (!bh.active) continue;
@@ -2871,7 +3013,7 @@ window.Game.Combat = {
             if (bh.life <= 0) bh.active = false;
         }
 
-        // Cập nhật các hiệu ứng hiển thị tĩnh (Thu hồi pool qua cờ active)
+        // 15. Thu hồi Pool qua cờ active cho các hiệu ứng hiển thị
         for (let i = 0; i < this.crossFlashes.length; i++) {
             if (this.crossFlashes[i].active && (this.crossFlashes[i].life -= dt) <= 0) {
                 this.crossFlashes[i].active = false;
@@ -2927,24 +3069,56 @@ window.Game.Combat = {
     },
 
     // ------------------------------------------------------------------------
-    // RENDER CANVAS 60 FPS CHO MOBILE (ZERO SHADOWBLUR, INT COORDINATES (x|0))
+    // RENDER CANVAS 60-120 FPS CHO MOBILE (ZERO SHADOWBLUR, INT COORDS (x|0))
     // ------------------------------------------------------------------------
     draw: function (ctx, camera) {
         const camX = ((camera && camera.x) || 0) | 0;
         const camY = ((camera && camera.y) || 0) | 0;
+        const camW = ((camera && camera.width) || window.innerWidth || 1280) | 0;
+        const camH = ((camera && camera.height) || window.innerHeight || 720) | 0;
         const now = performance.now() * 0.001;
 
         ctx.save();
 
-        // 0. Vùng Dung Nham Địa Chấn
+        // 0a. Vệt Lửa Giày Lướt Phản Lực (Aero Boots - I.3)
+        for (let i = 0; i < this.fireTrails.length; i++) {
+            const ft = this.fireTrails[i];
+            if (!ft.active) continue;
+
+            const posX = (ft.x - camX) | 0;
+            const posY = (ft.y - camY) | 0;
+            if (posX < -60 || posX > camW + 60 || posY < -60 || posY > camH + 60) continue;
+
+            const alpha = Math.max(0, ft.life / ft.maxLife);
+            const r = (ft.radius * (0.8 + Math.sin(now * 14 + i) * 0.2)) | 0;
+
+            ctx.save();
+            ctx.translate(posX, posY);
+            ctx.globalAlpha = alpha * 0.55;
+            ctx.fillStyle = '#f97316';
+            ctx.beginPath();
+            ctx.arc(0, 0, r, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.globalAlpha = alpha * 0.85;
+            ctx.fillStyle = '#fde047';
+            ctx.beginPath();
+            ctx.arc(0, 0, (r * 0.55) | 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // 0b. Vùng Dung Nham Địa Chấn
         for (let i = 0; i < this.magmaZones.length; i++) {
             const mz = this.magmaZones[i];
             if (!mz.active) continue;
 
-            const alpha = Math.min(0.65, (mz.life / mz.maxLife) * 0.75);
             const posX = (mz.x - camX) | 0;
             const posY = (mz.y - camY) | 0;
             const r = mz.radius | 0;
+            if (posX < -r || posX > camW + r || posY < -r || posY > camH + r) continue;
+
+            const alpha = Math.min(0.65, (mz.life / mz.maxLife) * 0.75);
 
             ctx.save();
             ctx.translate(posX, posY);
@@ -2962,13 +3136,15 @@ window.Game.Combat = {
             ctx.restore();
         }
 
-        // 0b. Tàn Dư Thời Không (Vòng xoáy kích hoạt chém)
+        // 0c. Tàn Dư Thời Không (Vòng xoáy chờ kích hoạt chém)
         for (let i = 0; i < this.spacetimeEchoes.length; i++) {
             const echo = this.spacetimeEchoes[i];
             if (!echo.active) continue;
 
             const posX = (echo.x - camX) | 0;
             const posY = (echo.y - camY) | 0;
+            if (posX < -150 || posX > camW + 150 || posY < -150 || posY > camH + 150) continue;
+
             const alpha = Math.max(0, echo.life / echo.maxLife);
 
             ctx.save();
@@ -2994,19 +3170,21 @@ window.Game.Combat = {
             ctx.restore();
         }
 
-        // 0c. Phân Thân Thời Gian (III.1)
+        // 0d. Phân Thân Thời Gian (III.1 - Time Clones)
         for (let i = 0; i < this.timeClones.length; i++) {
             const tc = this.timeClones[i];
             if (!tc.active) continue;
 
             const posX = (tc.x - camX) | 0;
             const posY = (tc.y - camY) | 0;
+            if (posX < -50 || posX > camW + 50 || posY < -50 || posY > camH + 50) continue;
+
             const alpha = Math.min(1.0, (tc.life / tc.maxLife) * 1.5);
 
             ctx.save();
             ctx.translate(posX, posY);
             ctx.rotate(tc.angle);
-            ctx.globalAlpha = alpha * 0.45;
+            ctx.globalAlpha = alpha * 0.50;
             ctx.fillStyle = '#00f2fe';
             ctx.beginPath();
             ctx.arc(0, 0, tc.radius | 0, 0, Math.PI * 2);
@@ -3015,6 +3193,10 @@ window.Game.Combat = {
             ctx.strokeStyle = '#ffffff';
             ctx.lineWidth = 2;
             ctx.stroke();
+
+            // Mũi tên định hướng tự chém
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect((tc.radius * 0.4) | 0, -2, 10, 4);
             ctx.restore();
         }
 
@@ -3026,6 +3208,7 @@ window.Game.Combat = {
             const posX = (bh.x - camX) | 0;
             const posY = (bh.y - camY) | 0;
             const r = bh.radius | 0;
+            if (posX < -r || posX > camW + r || posY < -r || posY > camH + r) continue;
 
             ctx.save();
             ctx.translate(posX, posY);
@@ -3057,6 +3240,7 @@ window.Game.Combat = {
 
             const posX = (g.x - camX) | 0;
             const posY = (g.y - camY) | 0;
+            if (posX < -50 || posX > camW + 50 || posY < -50 || posY > camH + 50) continue;
 
             ctx.save();
             ctx.translate(posX, posY);
@@ -3078,6 +3262,7 @@ window.Game.Combat = {
             const posX = (sw.x - camX) | 0;
             const posY = (sw.y - camY) | 0;
             const r = sw.radius | 0;
+            if (posX < -r || posX > camW + r || posY < -r || posY > camH + r) continue;
 
             ctx.save();
             ctx.globalAlpha = alpha;
@@ -3100,6 +3285,7 @@ window.Game.Combat = {
 
             const posX = (b.x - camX) | 0;
             const posY = (b.y - camY) | 0;
+            if (posX < -80 || posX > camW + 80 || posY < -80 || posY > camH + 80) continue;
 
             ctx.save();
             ctx.translate(posX, posY);
@@ -3183,6 +3369,7 @@ window.Game.Combat = {
             const sheet = this.spriteSheets && this.spriteSheets[sheetKey];
             const posX = (s.x - camX) | 0;
             const posY = (s.y - camY) | 0;
+            if (posX < -200 || posX > camW + 200 || posY < -200 || posY > camH + 200) continue;
 
             ctx.save();
             const progress = 1 - Math.max(0, Math.min(1, s.life / (s.maxLife || 0.24)));
@@ -3244,7 +3431,7 @@ window.Game.Combat = {
             ctx.restore();
         }
 
-        // 6. Tia Laser & Tia Sét
+        // 6. Tia Laser & Tia Sét Lan Truyền
         for (let i = 0; i < this.laserBeams.length; i++) {
             const b = this.laserBeams[i];
             if (!b.active) continue;
@@ -3281,9 +3468,11 @@ window.Game.Combat = {
             const cf = this.crossFlashes[i];
             if (!cf.active) continue;
 
-            const alpha = Math.max(0, cf.life / cf.maxLife);
             const posX = (cf.x - camX) | 0;
             const posY = (cf.y - camY) | 0;
+            if (posX < -50 || posX > camW + 50 || posY < -50 || posY > camH + 50) continue;
+
+            const alpha = Math.max(0, cf.life / cf.maxLife);
             const sz = cf.size | 0;
 
             ctx.save();
@@ -3307,8 +3496,9 @@ window.Game.Combat = {
 
             const posX = (p.x - camX) | 0;
             const posY = (p.y - camY) | 0;
-            const sz = Math.max(1, p.size | 0);
+            if (posX < -20 || posX > camW + 20 || posY < -20 || posY > camH + 20) continue;
 
+            const sz = Math.max(1, p.size | 0);
             ctx.fillStyle = p.color;
             ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
             ctx.beginPath();
@@ -3326,6 +3516,7 @@ window.Game.Combat = {
 
             const posX = (ft.x - camX) | 0;
             const posY = (ft.y - camY) | 0;
+            if (posX < -100 || posX > camW + 100 || posY < -50 || posY > camH + 50) continue;
 
             ctx.save();
             ctx.globalAlpha = Math.min(1, Math.max(0, (ft.life / ft.maxLife) * 1.25));
@@ -3400,3 +3591,10 @@ window.Game.Combat = {
         ctx.restore();
     }
 };
+
+// ----------------------------------------------------------------------------
+// TỰ ĐỘNG KHỞI TẠO COMBAT ENGINE KHI LOAD SCRIPT
+// ----------------------------------------------------------------------------
+if (typeof window !== 'undefined') {
+    window.Game.Combat.init();
+}
